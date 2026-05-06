@@ -1,0 +1,9 @@
+[project]
+name = "szoluciones-os"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=5.0,<6.0",
+    "django-unfold>=0.92.0",
+    "python-dotenv>=1.2.2",
+]

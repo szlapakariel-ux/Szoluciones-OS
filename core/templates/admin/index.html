@@ -1,0 +1,29 @@
+{% extends "admin/base.html" %}
+{% load i18n %}
+
+{% block title %}{% if subtitle %}{{ subtitle }} | {% endif %}{{ title }} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block branding %}
+    {% include "unfold/helpers/site_branding.html" %}
+{% endblock %}
+
+{% block content %}
+    {% if kpis %}
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {% for kpi in kpis %}
+        <div class="bg-white dark:bg-base-800 border border-base-200 dark:border-base-700 rounded-lg p-5 shadow-sm">
+            <div class="text-sm text-base-500 dark:text-base-300 font-medium uppercase tracking-wide mb-2">{{ kpi.title }}</div>
+            <div class="text-3xl font-bold text-primary-600 dark:text-primary-400 mb-1">{{ kpi.metric }}</div>
+            <div class="text-xs text-base-500 dark:text-base-400">{{ kpi.footer }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="flex flex-col lg:flex-row lg:gap-8">
+        <div class="grow">
+            {% include "unfold/helpers/app_list_default.html" %}
+        </div>
+        {% include "unfold/helpers/history.html" %}
+    </div>
+{% endblock %}
