@@ -20,10 +20,137 @@
     </div>
     {% endif %}
 
+    {% if charts %}
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        <div class="lg:col-span-2 bg-white dark:bg-base-800 border border-base-200 dark:border-base-700 rounded-lg p-5 shadow-sm">
+            <h3 class="text-xs font-semibold text-base-500 dark:text-base-300 uppercase tracking-wide mb-4">Ventas últimos 7 días</h3>
+            <canvas id="chartVentasDias" height="110"></canvas>
+        </div>
+        <div class="bg-white dark:bg-base-800 border border-base-200 dark:border-base-700 rounded-lg p-5 shadow-sm">
+            <h3 class="text-xs font-semibold text-base-500 dark:text-base-300 uppercase tracking-wide mb-4">Métodos de pago</h3>
+            <canvas id="chartMetodosPago"></canvas>
+        </div>
+    </div>
+    <div class="bg-white dark:bg-base-800 border border-base-200 dark:border-base-700 rounded-lg p-5 shadow-sm mb-8">
+        <h3 class="text-xs font-semibold text-base-500 dark:text-base-300 uppercase tracking-wide mb-4">Top 5 productos más vendidos</h3>
+        <canvas id="chartTopProductos" height="80"></canvas>
+    </div>
+    {% endif %}
+
     <div class="flex flex-col lg:flex-row lg:gap-8">
         <div class="grow">
             {% include "unfold/helpers/app_list_default.html" %}
         </div>
         {% include "unfold/helpers/history.html" %}
     </div>
+
+    {% if charts %}
+    {{ charts|json_script:"szos-chart-data" }}
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <script>
+    (function () {
+        var raw = document.getElementById('szos-chart-data');
+        if (!raw) return;
+        var d = JSON.parse(raw.textContent);
+        var dark = document.documentElement.classList.contains('dark');
+        var fg = dark ? '#d1d5db' : '#374151';
+        var grid = dark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
+        var teal = 'rgba(20,184,166,0.75)';
+        var tealBorder = 'rgb(20,184,166)';
+        var palette = [
+            'rgba(20,184,166,0.82)', 'rgba(45,212,191,0.82)',
+            'rgba(94,234,212,0.82)', 'rgba(153,246,228,0.82)',
+            'rgba(13,148,136,0.82)', 'rgba(17,94,89,0.82)',
+        ];
+
+        Chart.defaults.color = fg;
+        Chart.defaults.font.family = 'inherit';
+        Chart.defaults.font.size = 12;
+
+        // Ventas por día
+        new Chart(document.getElementById('chartVentasDias'), {
+            type: 'bar',
+            data: {
+                labels: d.ventasDias.labels,
+                datasets: [{
+                    label: 'Ventas ($)',
+                    data: d.ventasDias.data,
+                    backgroundColor: teal,
+                    borderColor: tealBorder,
+                    borderWidth: 1,
+                    borderRadius: 4,
+                }],
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { color: grid }, ticks: { color: fg } },
+                    y: {
+                        grid: { color: grid },
+                        ticks: {
+                            color: fg,
+                            callback: function (v) {
+                                return '$' + Number(v).toLocaleString('es-AR');
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        // Métodos de pago
+        if (d.metodosPago.labels.length) {
+            new Chart(document.getElementById('chartMetodosPago'), {
+                type: 'doughnut',
+                data: {
+                    labels: d.metodosPago.labels,
+                    datasets: [{
+                        data: d.metodosPago.data,
+                        backgroundColor: palette,
+                        borderColor: dark ? '#1f2937' : '#fff',
+                        borderWidth: 2,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { color: fg, boxWidth: 12, padding: 10 },
+                        },
+                    },
+                },
+            });
+        }
+
+        // Top productos
+        if (d.topProductos.labels.length) {
+            new Chart(document.getElementById('chartTopProductos'), {
+                type: 'bar',
+                data: {
+                    labels: d.topProductos.labels,
+                    datasets: [{
+                        label: 'Unidades vendidas',
+                        data: d.topProductos.data,
+                        backgroundColor: teal,
+                        borderColor: tealBorder,
+                        borderWidth: 1,
+                        borderRadius: 4,
+                    }],
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: { color: grid }, ticks: { color: fg } },
+                        y: { grid: { color: grid }, ticks: { color: fg } },
+                    },
+                },
+            });
+        }
+    })();
+    </script>
+    {% endif %}
 {% endblock %}
