@@ -19,7 +19,7 @@ class ProductoAdmin(TenantOwnedAdmin):
     list_filter = ("activo", "unidad_medida")
     search_fields = ("nombre", "codigo")
     fieldsets = (
-        ("Identificación", {"fields": ("nombre", "codigo", "unidad_medida", "activo")}),
+        ("Identificación", {"fields": ("nombre", "codigo", "presentacion", "unidad_medida", "activo")}),
         ("Stock", {"fields": ("stock_actual", "stock_minimo")}),
         ("Precios", {"fields": ("costo", "precio_venta")}),
     )
