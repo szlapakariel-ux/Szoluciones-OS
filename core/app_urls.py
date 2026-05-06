@@ -2,7 +2,7 @@ from django.urls import path
 
 from caja.views import caja_dia
 from core.views import app_home
-from stock.views import stock_lista
+from stock.views import producto_rapido, stock_lista
 from ventas.views import venta_agregar, venta_confirmar, venta_quitar, venta_rapida
 
 urlpatterns = [
@@ -11,6 +11,7 @@ urlpatterns = [
     path("venta/agregar/", venta_agregar, name="app_venta_agregar"),
     path("venta/quitar/<int:idx>/", venta_quitar, name="app_venta_quitar"),
     path("venta/confirmar/", venta_confirmar, name="app_venta_confirmar"),
+    path("producto/nuevo/", producto_rapido, name="app_producto_rapido"),
     path("caja/", caja_dia, name="app_caja"),
     path("stock/", stock_lista, name="app_stock"),
 ]
