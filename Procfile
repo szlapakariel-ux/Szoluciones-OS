@@ -1,0 +1,1 @@
+﻿web: python manage.py migrate --noinput && gunicorn szoluciones_os.wsgi
