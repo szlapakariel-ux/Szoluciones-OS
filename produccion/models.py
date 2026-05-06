@@ -55,14 +55,15 @@ class Receta(TenantOwnedModel):
     @property
     def precio_sugerido(self) -> Decimal:
         """Precio de venta sugerido = costo_unitario × (1 + ganancia%)."""
-        return self.costo_unitario * (1 + self.porcentaje_ganancia / 100)
+        ganancia = self.porcentaje_ganancia or Decimal("0")
+        return self.costo_unitario * (Decimal("1") + ganancia / Decimal("100"))
 
     @property
     def margen_real_pct(self) -> Decimal:
         """Margen bruto real usando el precio de venta actual del producto."""
-        precio = self.producto_resultante.precio_venta
+        precio = self.producto_resultante.precio_venta or Decimal("0")
         if precio > 0:
-            return (precio - self.costo_unitario) / precio * 100
+            return (precio - self.costo_unitario) / precio * Decimal("100")
         return Decimal("0")
 
 
@@ -91,7 +92,9 @@ class Ingrediente(TenantOwnedModel):
     @property
     def costo_ingrediente(self) -> Decimal:
         """Costo de usar esta cantidad del producto en la receta."""
-        return self.cantidad * self.producto.costo
+        cantidad = self.cantidad or Decimal("0")
+        costo = self.producto.costo or Decimal("0")
+        return cantidad * costo
 
 
 class ProduccionRealizada(TenantOwnedModel):
