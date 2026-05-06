@@ -90,6 +90,7 @@ def venta_agregar(request):
             "nombre": producto.nombre,
             "precio": str(producto.precio_venta),
             "cantidad": str(cantidad),
+            "unidad": producto.unidad_corta,
         })
     request.session["cart"] = cart
     return redirect("app_venta")
