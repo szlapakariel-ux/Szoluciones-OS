@@ -66,13 +66,6 @@ class Command(BaseCommand):
             )
             self.stdout.write(self.style.SUCCESS("[OK] Superusuario admin / admin creado"))
 
-        # Superusuario principal del owner
-        if not Usuario.objects.filter(username="ariel").exists():
-            Usuario.objects.create_superuser(
-                username="ariel", password="admin", email="ariel@szoluciones.local"
-            )
-            self.stdout.write(self.style.SUCCESS("[OK] Superusuario ariel / admin creado"))
-
         negocio, _ = Negocio.objects.get_or_create(
             nombre="Panadería Piloto",
             defaults={
@@ -83,6 +76,23 @@ class Command(BaseCommand):
             },
         )
         self.stdout.write(f"[OK] Negocio: {negocio}")
+
+        # Superusuario principal del owner: superuser + asignado al piloto
+        # para que pueda crear productos/clientes/etc desde el admin
+        # (TenantOwnedAdmin.save_model necesita que el user tenga negocio).
+        ariel = Usuario.objects.filter(username="ariel").first()
+        if not ariel:
+            ariel = Usuario.objects.create_superuser(
+                username="ariel",
+                password="admin",
+                email="ariel@szoluciones.local",
+                negocio=negocio,
+            )
+            self.stdout.write(self.style.SUCCESS("[OK] Superusuario ariel / admin creado"))
+        elif not ariel.negocio_id:
+            ariel.negocio = negocio
+            ariel.save(update_fields=["negocio"])
+            self.stdout.write(self.style.SUCCESS("[OK] ariel asignado a Panadería Piloto"))
 
         # Activamos el contexto de tenant para que el TenantManager filtre
         set_current_business(None)
@@ -164,6 +174,22 @@ class Command(BaseCommand):
             nombre="Lácteos La Vaca",
             defaults={"telefono": "+54 11 4222-4444"},
         )
+
+        # --- Stock inicial para productos terminados (que se venden pero
+        # no se compran porque salen de produccion).
+        # Sin esto, las ventas demo dejan stock negativo. ---
+        for codigo, cantidad_inicial in [("PAN001", "50"), ("MED001", "20")]:
+            prod = productos[codigo]
+            if not MovimientoStock.objects.all_tenants().filter(
+                producto=prod, motivo="Stock inicial demo"
+            ).exists():
+                MovimientoStock.objects.create(
+                    negocio=negocio,
+                    producto=prod,
+                    tipo=MovimientoStock.Tipo.AJUSTE,
+                    cantidad=Decimal(cantidad_inicial),
+                    motivo="Stock inicial demo",
+                )
 
         # --- Compras (con items, dispararán signals de stock) ---
         if not Compra.objects.all_tenants().filter(negocio=negocio).exists():
