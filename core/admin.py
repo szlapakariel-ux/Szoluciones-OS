@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.contrib.auth.models import Permission
 from unfold.admin import ModelAdmin
 
 from .models import Negocio, Usuario
@@ -85,6 +86,11 @@ class UsuarioAdmin(BaseUserAdmin, ModelAdmin):
             {
                 "classes": ("wide",),
                 "fields": ("username", "password1", "password2", "negocio"),
+                "description": (
+                    "Al crear un usuario con un Negocio asignado, "
+                    "automaticamente se marca como staff y se le dan permisos "
+                    "para operar todos los modulos de su negocio."
+                ),
             },
         ),
     )
@@ -96,3 +102,25 @@ class UsuarioAdmin(BaseUserAdmin, ModelAdmin):
         if request.user.is_authenticated and request.user.negocio_id:
             return qs.filter(negocio=request.user.negocio)
         return qs.none()
+
+    def save_model(self, request, obj, form, change):
+        # Onboarding 1-click: cuando se crea un usuario con un negocio
+        # asignado, lo marcamos como staff y le damos los permisos
+        # operativos del negocio. Asi alcanza con username + password +
+        # negocio para que el cliente pueda loguearse y trabajar.
+        is_new_with_negocio = (
+            not change
+            and obj.negocio_id
+            and not obj.is_superuser
+        )
+        if is_new_with_negocio:
+            obj.is_staff = True
+        super().save_model(request, obj, form, change)
+        if is_new_with_negocio:
+            perms = Permission.objects.filter(
+                content_type__app_label__in=[
+                    "stock", "compras", "clientes", "ventas",
+                    "produccion", "caja", "gastos",
+                ]
+            )
+            obj.user_permissions.set(perms)
