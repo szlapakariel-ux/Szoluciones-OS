@@ -4,6 +4,6 @@
         "buildCommand": "uv sync && uv run python manage.py collectstatic --noinput"
     },
     "deploy": {
-        "startCommand": "uv run python manage.py migrate --noinput && uv run python manage.py createsuperuser --noinput || true && uv run gunicorn szoluciones_os.wsgi --bind 0.0.0.0:$PORT --workers 2"
+        "startCommand": "uv run python manage.py migrate --noinput && uv run python manage.py seed_demo && uv run gunicorn szoluciones_os.wsgi --bind 0.0.0.0:$PORT --workers 2"
     }
 }
