@@ -1,5 +1,5 @@
 from django.contrib import admin
-from django.utils.html import format_html
+from django.utils.html import format_html, format_html_join
 from unfold.admin import TabularInline
 
 from core.admin import TenantOwnedAdmin
@@ -95,19 +95,24 @@ class RecetaAdmin(TenantOwnedAdmin):
         if not ingredientes:
             return "Sin ingredientes cargados."
 
-        filas = "".join(
-            format_html(
+        filas = format_html_join(
+            "",
+            (
                 "<tr>"
                 "<td style='padding:4px 10px'>{}</td>"
                 "<td style='padding:4px 10px;text-align:right'>{}&nbsp;{}</td>"
                 "<td style='padding:4px 10px;text-align:right;font-weight:600'>{}</td>"
-                "</tr>",
-                ing.producto.nombre,
-                ing.cantidad,
-                ing.producto.get_unidad_medida_display(),
-                _fmt(ing.costo_ingrediente),
-            )
-            for ing in ingredientes
+                "</tr>"
+            ),
+            (
+                (
+                    ing.producto.nombre,
+                    ing.cantidad,
+                    ing.producto.get_unidad_medida_display(),
+                    _fmt(ing.costo_ingrediente),
+                )
+                for ing in ingredientes
+            ),
         )
 
         costo_total  = obj.costo_total
@@ -165,7 +170,7 @@ class RecetaAdmin(TenantOwnedAdmin):
               </table>
             </div>
             """,
-            format_html("{}", filas),
+            filas,
             _fmt(costo_total),
             rendimiento, unidad,
             _fmt(costo_unit),
