@@ -13,6 +13,23 @@ class Negocio(models.Model):
     fecha_alta = models.DateField("Fecha de alta", auto_now_add=True)
     activo = models.BooleanField("Activo", default=True)
 
+    # Módulos opcionales
+    modulo_produccion = models.BooleanField("Producción y recetas", default=True)
+    modulo_clientes = models.BooleanField("Clientes", default=True)
+    modulo_compras = models.BooleanField("Compras", default=True)
+    modulo_gastos = models.BooleanField("Gastos fijos", default=True)
+
+    # Trial
+    trial_hasta = models.DateField(
+        "Trial hasta",
+        null=True,
+        blank=True,
+        help_text="Vacío = sin restricción. Pasada la fecha el negocio queda en solo-lectura.",
+    )
+
+    # Onboarding
+    onboarding_completado = models.BooleanField("Onboarding completado", default=False)
+
     class Meta:
         verbose_name = "Negocio"
         verbose_name_plural = "Negocios"
@@ -53,3 +70,18 @@ class TenantOwnedModel(models.Model):
 
     class Meta:
         abstract = True
+
+
+class ActividadNegocio(models.Model):
+    negocio = models.ForeignKey(Negocio, on_delete=models.CASCADE, related_name="actividades")
+    fecha = models.DateTimeField(auto_now_add=True)
+    modulo = models.CharField(max_length=50)
+    accion = models.CharField(max_length=200)
+
+    class Meta:
+        ordering = ["-fecha"]
+        verbose_name = "Actividad"
+        verbose_name_plural = "Actividades"
+
+    def __str__(self):
+        return f"{self.fecha:%d/%m/%Y %H:%M} — {self.accion}"
