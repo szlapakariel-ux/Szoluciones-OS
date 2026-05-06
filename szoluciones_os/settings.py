@@ -17,6 +17,7 @@ SECRET_KEY = os.environ.get(
     "django-insecure-dev-only-change-me-szoluciones-os",
 )
 DEBUG = os.environ.get("DEBUG", "True").lower() == "true"
+
 ALLOWED_HOSTS = [
     h.strip()
     for h in os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,0.0.0.0,.railway.app").split(",")
@@ -31,6 +32,14 @@ CSRF_TRUSTED_ORIGINS = [
     ).split(",")
     if o.strip()
 ]
+
+# Railway expone el dominio público en RAILWAY_PUBLIC_DOMAIN. Lo agregamos
+# a ALLOWED_HOSTS y CSRF_TRUSTED_ORIGINS automáticamente para no depender
+# del wildcard (que en algunos casos no es suficiente).
+_railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
+if _railway_domain and _railway_domain not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(_railway_domain)
+    CSRF_TRUSTED_ORIGINS.append(f"https://{_railway_domain}")
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True
