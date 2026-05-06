@@ -38,14 +38,25 @@ def producto_rapido(request):
         if unidad not in valid_unidades:
             unidad = UnidadMedida.UNIDAD
 
-        Producto.objects.create(
+        producto = Producto.objects.create(
             negocio=negocio,
             nombre=nombre,
             presentacion=presentacion,
             unidad_medida=unidad,
             precio_venta=precio,
         )
-        messages.success(request, f"Producto '{nombre}' creado. Cargá el stock cuando puedas.")
+
+        cart = request.session.get("cart", [])
+        cart.append({
+            "producto_id": producto.pk,
+            "nombre": producto.nombre,
+            "precio": str(producto.precio_venta),
+            "cantidad": "1",
+            "unidad": producto.unidad_corta,
+        })
+        request.session["cart"] = cart
+
+        messages.success(request, f"'{nombre}' agregado al carrito. Cargá el stock cuando puedas.")
         return redirect("app_venta")
 
     return render(request, "app/producto_rapido.html", {
