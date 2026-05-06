@@ -128,6 +128,17 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LOGIN_URL = "/admin/login/"
 LOGIN_REDIRECT_URL = "/admin/"
 
+
+def _mod(attr):
+    """Devuelve una permission callable para unfold SIDEBAR basada en un flag del negocio."""
+    def check(request):
+        if request.user.is_superuser:
+            return True
+        neg = getattr(request.user, "negocio", None)
+        return bool(getattr(neg, attr, True))
+    return check
+
+
 UNFOLD = {
     "SITE_TITLE": "Szoluciones OS",
     "SITE_HEADER": "Szoluciones OS",
@@ -199,26 +210,31 @@ UNFOLD = {
                         "title": "Compras",
                         "icon": "shopping_cart",
                         "link": reverse_lazy("admin:compras_compra_changelist"),
+                        "permission": _mod("modulo_compras"),
                     },
                     {
                         "title": "Recetas",
                         "icon": "restaurant",
                         "link": reverse_lazy("admin:produccion_receta_changelist"),
+                        "permission": _mod("modulo_produccion"),
                     },
                     {
                         "title": "Ejecutar producción",
                         "icon": "local_fire_department",
                         "link": reverse_lazy("admin:produccion_produccionrealizada_changelist"),
+                        "permission": _mod("modulo_produccion"),
                     },
                     {
                         "title": "Clientes",
                         "icon": "groups",
                         "link": reverse_lazy("admin:clientes_cliente_changelist"),
+                        "permission": _mod("modulo_clientes"),
                     },
                     {
                         "title": "Gastos fijos",
                         "icon": "receipt_long",
                         "link": reverse_lazy("admin:gastos_gastofijo_changelist"),
+                        "permission": _mod("modulo_gastos"),
                     },
                 ],
             },

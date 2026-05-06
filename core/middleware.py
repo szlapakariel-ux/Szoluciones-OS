@@ -1,3 +1,5 @@
+from django.utils import timezone
+
 from .managers import clear_current_business, set_current_business
 
 
@@ -14,6 +16,11 @@ class CurrentBusinessMiddleware:
         if user is not None and user.is_authenticated:
             negocio = getattr(user, "negocio", None)
         set_current_business(negocio)
+        request.negocio_frozen = (
+            bool(negocio)
+            and bool(negocio.trial_hasta)
+            and negocio.trial_hasta < timezone.localdate()
+        )
         try:
             response = self.get_response(request)
         finally:

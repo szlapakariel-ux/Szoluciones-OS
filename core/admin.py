@@ -1,9 +1,9 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import Permission
-from unfold.admin import ModelAdmin
+from unfold.admin import ModelAdmin, TabularInline
 
-from .models import Negocio, Usuario
+from .models import ActividadNegocio, Negocio, Usuario
 
 
 class TenantOwnedAdmin(ModelAdmin):
@@ -37,15 +37,62 @@ class TenantOwnedAdmin(ModelAdmin):
             )
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
+    # Trial freeze: si el trial venció, el negocio queda en solo-lectura
+    def has_add_permission(self, request):
+        if getattr(request, "negocio_frozen", False):
+            return False
+        return super().has_add_permission(request)
+
+    def has_change_permission(self, request, obj=None):
+        if getattr(request, "negocio_frozen", False):
+            return False
+        return super().has_change_permission(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        if getattr(request, "negocio_frozen", False):
+            return False
+        return super().has_delete_permission(request, obj)
+
+
+class ActividadNegocioInline(TabularInline):
+    model = ActividadNegocio
+    extra = 0
+    max_num = 0
+    fields = ("fecha", "modulo", "accion")
+    readonly_fields = ("fecha", "modulo", "accion")
+    can_delete = False
+    tab = True
+    ordering = ("-fecha",)
+    verbose_name = "Actividad reciente"
+    verbose_name_plural = "Actividad reciente"
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
 
 @admin.register(Negocio)
 class NegocioAdmin(ModelAdmin):
-    list_display = ("nombre", "rubro", "telefono", "fecha_alta", "activo")
+    list_display = ("nombre", "rubro", "telefono", "fecha_alta", "activo", "trial_hasta")
     list_filter = ("activo", "rubro")
     search_fields = ("nombre", "cuit", "telefono")
+    inlines = [ActividadNegocioInline]
     fieldsets = (
-        ("Datos principales", {"fields": ("nombre", "rubro", "activo")}),
+        ("Datos principales", {"fields": ("nombre", "rubro")}),
         ("Contacto", {"fields": ("telefono", "direccion", "cuit")}),
+        (
+            "Módulos habilitados",
+            {
+                "fields": ("modulo_produccion", "modulo_clientes", "modulo_compras", "modulo_gastos"),
+                "description": "Activá o desactivá los módulos disponibles para este negocio.",
+            },
+        ),
+        (
+            "Trial y estado",
+            {
+                "fields": ("activo", "trial_hasta"),
+                "description": "Dejá 'Trial hasta' vacío para acceso sin restricción de tiempo.",
+            },
+        ),
     )
 
     def get_queryset(self, request):
@@ -122,10 +169,6 @@ class UsuarioAdmin(BaseUserAdmin, ModelAdmin):
     actions = ["activar_staff"]
 
     def save_model(self, request, obj, form, change):
-        # Onboarding 1-click: cuando se crea un usuario con un negocio
-        # asignado, lo marcamos como staff y le damos los permisos
-        # operativos del negocio. Asi alcanza con username + password +
-        # negocio para que el cliente pueda loguearse y trabajar.
         is_new_with_negocio = (
             not change
             and obj.negocio_id

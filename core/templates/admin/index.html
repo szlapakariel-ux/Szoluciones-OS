@@ -8,6 +8,37 @@
 {% endblock %}
 
 {% block content %}
+    {% if trial_warning %}
+    <div class="mb-6 rounded-lg px-5 py-4 {% if trial_warning.vencido %}bg-red-50 border border-red-300 dark:bg-red-950 dark:border-red-700{% else %}bg-yellow-50 border border-yellow-300 dark:bg-yellow-950 dark:border-yellow-700{% endif %}">
+        {% if trial_warning.vencido %}
+            <strong class="text-red-700 dark:text-red-400">Trial vencido.</strong>
+            <span class="text-red-600 dark:text-red-300">El sistema está en modo solo-lectura. Contactá a tu administrador para continuar.</span>
+        {% else %}
+            <strong class="text-yellow-700 dark:text-yellow-400">Trial: quedan {{ trial_warning.dias }} día(s).</strong>
+            <span class="text-yellow-600 dark:text-yellow-300">Contactá a tu administrador para activar tu cuenta.</span>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if onboarding %}
+    <div class="mb-6 bg-white dark:bg-base-800 border border-primary-200 dark:border-primary-800 rounded-lg p-5 shadow-sm">
+        <h3 class="text-sm font-semibold text-primary-700 dark:text-primary-400 mb-3">Primeros pasos</h3>
+        <ul class="space-y-2">
+            {% for paso in onboarding %}
+            <li class="flex items-center gap-3 text-sm">
+                {% if paso.hecho %}
+                    <span class="text-green-500 font-bold">✓</span>
+                    <span class="line-through text-base-400">{{ paso.titulo }}</span>
+                {% else %}
+                    <span class="text-base-300">○</span>
+                    <a href="{{ paso.link }}" class="text-primary-600 dark:text-primary-400 hover:underline font-medium">{{ paso.titulo }}</a>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
     {% if kpis %}
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {% for kpi in kpis %}

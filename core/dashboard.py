@@ -26,6 +26,8 @@ def dashboard_callback(request, context):
     """KPIs y datos de gráficos para la home del admin."""
     context["kpis"] = []
     context["charts"] = None
+    context["trial_warning"] = None
+    context["onboarding"] = None
     if not request.user.is_authenticated or not request.user.negocio_id:
         return context
 
@@ -36,6 +38,11 @@ def dashboard_callback(request, context):
     negocio = request.user.negocio
     hoy = timezone.localdate()
     inicio_semana = hoy - timedelta(days=hoy.weekday())
+
+    # --- Trial warning ---
+    if negocio.trial_hasta:
+        dias = (negocio.trial_hasta - hoy).days
+        context["trial_warning"] = {"dias": dias, "vencido": dias < 0}
 
     # --- KPIs ---
     ventas_hoy = Venta.objects.all_tenants().filter(negocio=negocio, fecha__date=hoy)
@@ -119,5 +126,32 @@ def dashboard_callback(request, context):
         "topProductos": {"labels": labels_productos, "data": data_productos},
         "metodosPago": {"labels": labels_metodos, "data": data_metodos},
     })
+
+    # --- Onboarding checklist (se oculta cuando todo está completo) ---
+    if not negocio.onboarding_completado:
+        tiene_producto = Producto.objects.all_tenants().filter(negocio=negocio).exists()
+        tiene_venta = Venta.objects.all_tenants().filter(negocio=negocio).exists()
+        pasos = [
+            {
+                "titulo": "Cargá tu primer producto",
+                "hecho": tiene_producto,
+                "link": "/admin/stock/producto/add/",
+            },
+            {
+                "titulo": "Registrá tu primera venta",
+                "hecho": tiene_venta,
+                "link": "/admin/ventas/venta/add/",
+            },
+            {
+                "titulo": "Mirá tu dashboard",
+                "hecho": True,
+                "link": "/admin/",
+            },
+        ]
+        if all(p["hecho"] for p in pasos):
+            negocio.onboarding_completado = True
+            negocio.save(update_fields=["onboarding_completado"])
+        else:
+            context["onboarding"] = pasos
 
     return context
