@@ -103,6 +103,24 @@ class UsuarioAdmin(BaseUserAdmin, ModelAdmin):
             return qs.filter(negocio=request.user.negocio)
         return qs.none()
 
+    @admin.action(description="Activar como usuario de negocio (staff + permisos)")
+    def activar_staff(self, request, queryset):
+        perms = Permission.objects.filter(
+            content_type__app_label__in=[
+                "stock", "compras", "clientes", "ventas",
+                "produccion", "caja", "gastos",
+            ]
+        )
+        count = 0
+        for user in queryset.filter(is_superuser=False):
+            user.is_staff = True
+            user.save(update_fields=["is_staff"])
+            user.user_permissions.set(perms)
+            count += 1
+        self.message_user(request, f"{count} usuario(s) activados como staff con permisos operativos.")
+
+    actions = ["activar_staff"]
+
     def save_model(self, request, obj, form, change):
         # Onboarding 1-click: cuando se crea un usuario con un negocio
         # asignado, lo marcamos como staff y le damos los permisos
