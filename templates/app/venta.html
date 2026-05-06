@@ -14,6 +14,14 @@
 {% endfor %}
 {% endif %}
 
+{% if sin_stock %}
+<div class="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+    <strong>⚠ Stock negativo:</strong>
+    {% for p in sin_stock %}{{ p.nombre }}{% if not forloop.last %}, {% endif %}{% endfor %}
+    — ajustá el stock antes de seguir vendiendo.
+</div>
+{% endif %}
+
 {% if cart %}
 <div class="bg-primary-50 border border-primary-200 rounded-xl p-4 mb-5">
     <div class="flex items-center justify-between mb-3">
@@ -68,13 +76,21 @@
     <form method="post" action="{% url 'app_venta_agregar' %}">
         {% csrf_token %}
         <input type="hidden" name="producto_id" value="{{ p.pk }}">
-        <div class="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 flex items-center gap-3">
+        <div class="bg-white rounded-xl border {% if p.stock_actual < 0 %}border-red-200{% else %}border-gray-100{% endif %} shadow-sm px-4 py-3 flex items-center gap-3">
             <div class="flex-1 min-w-0">
-                <div class="font-medium text-gray-800 text-sm truncate">{{ p.nombre }}</div>
+                <div class="flex items-center gap-2">
+                    <span class="font-medium text-gray-800 text-sm truncate">{{ p.nombre }}</span>
+                    {% if p.stock_actual < 0 %}
+                    <span class="text-xs bg-red-100 text-red-600 font-semibold px-1.5 py-0.5 rounded-md shrink-0">Sin stock</span>
+                    {% endif %}
+                </div>
+                {% if p.presentacion %}
+                <div class="text-xs text-primary-600 font-medium mt-0.5">{{ p.presentacion }}</div>
+                {% endif %}
                 <div class="text-xs text-gray-400 mt-0.5">
-                    Stock: {{ p.stock_actual|floatformat:"-2" }} {{ p.unidad_medida }}
+                    {% if p.stock_actual >= 0 %}Stock: {{ p.stock_actual|floatformat:"-2" }} {{ p.unidad_corta }}{% else %}<span class="text-red-400">Ajustar stock</span>{% endif %}
                     &nbsp;·&nbsp;
-                    ${{ p.precio_venta|floatformat:2 }}
+                    ${{ p.precio_venta|floatformat:2 }} / {{ p.unidad_corta }}
                 </div>
             </div>
             <div class="flex items-center gap-2 shrink-0">

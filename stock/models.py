@@ -16,9 +16,26 @@ class UnidadMedida(models.TextChoices):
     CAJA = "CA", "Caja"
 
 
+_UNIDAD_CORTA = {
+    "UN": "unidad",
+    "KG": "kg",
+    "GR": "gr",
+    "LT": "litro",
+    "MT": "m",
+    "DC": "docena",
+    "CA": "caja",
+}
+
+
 class Producto(TenantOwnedModel):
     nombre = models.CharField("Nombre", max_length=120)
     codigo = models.CharField("Código", max_length=40, blank=True)
+    presentacion = models.CharField(
+        "Presentación",
+        max_length=80,
+        blank=True,
+        help_text='Ej: "200 ml", "250 g", "Docena", "Caja x 12". Se muestra en el POS debajo del nombre.',
+    )
     unidad_medida = models.CharField(
         "Unidad de medida",
         max_length=2,
@@ -53,6 +70,10 @@ class Producto(TenantOwnedModel):
 
     def __str__(self):
         return self.nombre
+
+    @property
+    def unidad_corta(self):
+        return _UNIDAD_CORTA.get(self.unidad_medida, self.get_unidad_medida_display().lower())
 
 
 class MovimientoStock(TenantOwnedModel):

@@ -2,6 +2,8 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db.models import Sum, Value
+from django.db.models.functions import Coalesce
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -34,14 +36,19 @@ def venta_rapida(request):
     productos = (
         Producto.objects.all_tenants()
         .filter(negocio=negocio, activo=True)
-        .order_by("nombre")
+        .annotate(total_vendido=Coalesce(Sum("items_venta__cantidad"), Value(Decimal("0"))))
+        .order_by("-total_vendido", "nombre")
     )
+
+    productos_list = list(productos)
+    sin_stock = [p for p in productos_list if p.stock_actual < 0]
 
     return render(request, "app/venta.html", {
         "active_tab": "venta",
         "cart": cart,
         "total_fmt": _fmt(total),
-        "productos": productos,
+        "productos": productos_list,
+        "sin_stock": sin_stock,
         "metodos_pago": MovimientoCaja.MetodoPago.choices,
     })
 
