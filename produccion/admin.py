@@ -80,8 +80,8 @@ class RecetaAdmin(TenantOwnedAdmin):
         pct = obj.margen_real_pct
         color = "#16a34a" if pct >= 20 else "#dc2626"
         return format_html(
-            '<span style="color:{};font-weight:600">{:.1f}%</span>',
-            color, pct,
+            '<span style="color:{};font-weight:600">{}</span>',
+            color, f"{pct:.1f}%",
         )
     margen_display.short_description = "Margen real"
 
@@ -159,7 +159,7 @@ class RecetaAdmin(TenantOwnedAdmin):
                 </tr>
                 <tr>
                   <td style="padding:5px 0;color:#374151">Margen bruto real</td>
-                  <td style="padding:5px 0;text-align:right;font-weight:700;color:{}">{:.1f}&nbsp;%</td>
+                  <td style="padding:5px 0;text-align:right;font-weight:700;color:{}">{}&nbsp;%</td>
                 </tr>
                 <tr style="border-top:2px solid #0d9488;background:#f0fdf4">
                   <td style="padding:8px 0 8px 8px;color:#0d9488;font-weight:700">
@@ -175,7 +175,7 @@ class RecetaAdmin(TenantOwnedAdmin):
             rendimiento, unidad,
             _fmt(costo_unit),
             _fmt(precio_actual),
-            margen_color, margen,
+            margen_color, f"{margen:.1f}",
             ganancia_pct,
             _fmt(precio_sug),
         )
