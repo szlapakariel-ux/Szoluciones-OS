@@ -66,6 +66,13 @@ class Command(BaseCommand):
             )
             self.stdout.write(self.style.SUCCESS("[OK] Superusuario admin / admin creado"))
 
+        # Superusuario principal del owner
+        if not Usuario.objects.filter(username="ariel").exists():
+            Usuario.objects.create_superuser(
+                username="ariel", password="admin", email="ariel@szoluciones.local"
+            )
+            self.stdout.write(self.style.SUCCESS("[OK] Superusuario ariel / admin creado"))
+
         negocio, _ = Negocio.objects.get_or_create(
             nombre="Panadería Piloto",
             defaults={
