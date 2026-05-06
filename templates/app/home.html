@@ -3,44 +3,189 @@
 {% block title %}Inicio · Szoluciones OS{% endblock %}
 
 {% block content %}
-<h1 class="text-lg font-semibold text-gray-800 mb-4">Buen día</h1>
 
-{% if kpis %}
-<div class="grid grid-cols-2 gap-3 mb-6">
-    {% for kpi in kpis %}
-    <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-        <div class="text-xs text-gray-400 mb-1 truncate">{{ kpi.title }}</div>
-        <div class="text-xl font-bold text-primary-600 leading-tight">{{ kpi.metric }}</div>
-        <div class="text-xs text-gray-400 mt-0.5 truncate">{{ kpi.footer }}</div>
+{% if tiene_datos %}
+
+{# ── Hero: facturación del mes ── #}
+<div class="rounded-2xl p-5 mb-4 shadow-lg text-white"
+     style="background: linear-gradient(135deg, #0f766e 0%, #0d9488 60%, #2dd4bf 100%);">
+    <div class="flex items-start justify-between mb-4">
+        <div>
+            <p class="text-xs font-semibold uppercase tracking-widest mb-1"
+               style="color: rgba(255,255,255,0.7);">{{ mes_nombre }}</p>
+            <p class="text-4xl font-bold tracking-tight leading-none">{{ total_mes_fmt }}</p>
+            <p class="text-xs mt-1" style="color: rgba(255,255,255,0.6);">{{ total_mes_completo }}</p>
+        </div>
+        {% if cambio_pct is not None %}
+        <div class="rounded-xl px-3 py-2 text-center min-w-[72px]"
+             style="background: rgba(255,255,255,0.15);">
+            <p class="text-lg font-bold leading-none
+               {% if cambio_positivo %}text-green-300{% else %}text-red-300{% endif %}">
+                {% if cambio_positivo %}▲{% else %}▼{% endif %}&nbsp;{{ cambio_pct }}%
+            </p>
+            <p class="text-xs mt-0.5" style="color: rgba(255,255,255,0.6);">vs mes ant.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    {# mini sparkline #}
+    <canvas id="sparkline" height="40" class="w-full"></canvas>
+</div>
+
+{# ── 3 métricas ── #}
+<div class="grid grid-cols-3 gap-2 mb-4">
+    <div class="bg-white rounded-xl p-3 shadow-sm border border-gray-100 text-center">
+        <p class="text-lg font-bold text-gray-800 leading-tight">{{ count_hoy }}</p>
+        <p class="text-xs text-gray-400 mt-0.5">Ventas hoy</p>
+    </div>
+    <div class="bg-white rounded-xl p-3 shadow-sm border border-gray-100 text-center">
+        <p class="text-lg font-bold text-gray-800 leading-tight">{{ ticket_promedio_fmt }}</p>
+        <p class="text-xs text-gray-400 mt-0.5">Ticket prom.</p>
+    </div>
+    <div class="bg-white rounded-xl p-3 shadow-sm border border-gray-100 text-center">
+        <p class="text-lg font-bold text-gray-800 leading-tight">{{ count_mes }}</p>
+        <p class="text-xs text-gray-400 mt-0.5">Ventas del mes</p>
+    </div>
+</div>
+
+{# ── Top productos ── #}
+{% if top_productos %}
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-4">
+    <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
+        Más vendidos — {{ mes_nombre }}
+    </h3>
+    {% for p in top_productos %}
+    <div class="flex items-center gap-3 py-2 {% if not forloop.last %}border-b border-gray-50{% endif %}">
+        <div class="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold
+             {% if forloop.first %}bg-teal-500 text-white
+             {% elif forloop.counter == 2 %}bg-teal-100 text-teal-700
+             {% else %}bg-gray-100 text-gray-500{% endif %}">
+            {{ forloop.counter }}
+        </div>
+        <span class="flex-1 text-sm text-gray-800 truncate">{{ p.nombre }}</span>
+        <span class="text-sm font-semibold text-gray-500 shrink-0">{{ p.total|floatformat:"-2" }} u.</span>
     </div>
     {% endfor %}
 </div>
 {% endif %}
 
-<div class="grid grid-cols-3 gap-3">
-    <a href="{% url 'app_venta' %}"
-       class="flex flex-col items-center bg-primary-600 text-white rounded-xl p-4 shadow-sm active:bg-primary-700 transition-colors">
-        <svg class="w-8 h-8 mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+{# ── Alerta bajo stock ── #}
+{% if bajo_stock > 0 %}
+<a href="{% url 'app_stock' %}"
+   class="flex items-center gap-3 bg-amber-50 border border-amber-300 rounded-xl p-3 mb-4">
+    <svg class="w-5 h-5 text-amber-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M12 9v2m0 4h.01m-6.94 4h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z"/>
+    </svg>
+    <span class="text-sm text-amber-700 font-medium">
+        {{ bajo_stock }} producto{% if bajo_stock != 1 %}s{% endif %} bajo stock mínimo — tocá para ver
+    </span>
+</a>
+{% endif %}
+
+{% else %}
+
+{# ── Estado vacío — motivacional ── #}
+<div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-4">
+    <div class="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
+         style="background: linear-gradient(135deg, #ccfbf1, #99f6e4);">
+        <svg class="w-8 h-8 text-teal-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round"
-                  d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                  d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941"/>
         </svg>
-        <span class="text-xs font-semibold text-center leading-tight">Nueva venta</span>
+    </div>
+    <h2 class="text-center font-bold text-gray-800 text-lg mb-1">Tu negocio, en números</h2>
+    <p class="text-center text-gray-400 text-sm mb-5">
+        Registrá tus ventas y en días vas a ver tu propio panel de control.
+    </p>
+
+    <div class="space-y-3 mb-6">
+        {% for item in empty_previews %}
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-full bg-teal-50 flex items-center justify-center shrink-0">
+                <svg class="w-4 h-4 text-teal-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+                </svg>
+            </div>
+            <span class="text-sm text-gray-700">{{ item }}</span>
+        </div>
+        {% endfor %}
+    </div>
+
+    <a href="{% url 'app_venta' %}"
+       class="block text-center bg-teal-600 text-white font-semibold py-3.5 rounded-xl text-sm active:bg-teal-700 transition-colors">
+        Registrar primera venta
+    </a>
+</div>
+
+{# Preview estática del dashboard ── difuminada, para mostrar lo que van a ver #}
+<div class="relative rounded-2xl overflow-hidden mb-4" style="filter: blur(3px); opacity: 0.4; pointer-events: none;">
+    <div class="rounded-2xl p-5 text-white" style="background: linear-gradient(135deg,#0f766e,#2dd4bf);">
+        <p class="text-xs uppercase tracking-widest mb-1" style="color:rgba(255,255,255,0.7)">Mayo 2026</p>
+        <p class="text-4xl font-bold">$84.200</p>
+        <div class="mt-4 flex gap-1 items-end h-8">
+            {% for h in "1245367" %}
+            <div class="flex-1 rounded-sm" style="background:rgba(255,255,255,0.4);height:{% cycle '30%' '60%' '45%' '90%' '55%' '75%' '100%' %}"></div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+<p class="text-center text-xs text-gray-400 -mt-2 mb-4">Así va a verse tu dashboard cuando cargues tus ventas</p>
+
+{% endif %}
+
+{# ── Acciones rápidas ── #}
+<div class="grid grid-cols-2 gap-3">
+    <a href="{% url 'app_venta' %}"
+       class="flex items-center justify-center gap-2 bg-teal-600 text-white rounded-xl py-3.5 text-sm font-semibold active:bg-teal-700 transition-colors shadow-sm">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+        </svg>
+        Nueva venta
     </a>
     <a href="{% url 'app_caja' %}"
-       class="flex flex-col items-center bg-white text-gray-700 rounded-xl p-4 shadow-sm border border-gray-100 active:bg-gray-50 transition-colors">
-        <svg class="w-8 h-8 mb-2 text-primary-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+       class="flex items-center justify-center gap-2 bg-white text-gray-700 border border-gray-200 rounded-xl py-3.5 text-sm font-semibold active:bg-gray-50 transition-colors shadow-sm">
+        <svg class="w-5 h-5 text-teal-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round"
                   d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/>
         </svg>
-        <span class="text-xs font-semibold text-center leading-tight">Ver caja</span>
-    </a>
-    <a href="{% url 'app_stock' %}"
-       class="flex flex-col items-center bg-white text-gray-700 rounded-xl p-4 shadow-sm border border-gray-100 active:bg-gray-50 transition-colors">
-        <svg class="w-8 h-8 mb-2 text-primary-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round"
-                  d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.6a1 1 0 00-.7.3l-2.4 2.4a1 1 0 01-.7.3H9.4a1 1 0 01-.7-.3L6.3 13.3A1 1 0 005.6 13H4"/>
-        </svg>
-        <span class="text-xs font-semibold text-center leading-tight">Ver stock</span>
+        Ver caja
     </a>
 </div>
+
+{% if tiene_datos %}
+{{ spark_json|json_script:"spark-data" }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    var raw = document.getElementById('spark-data');
+    if (!raw) return;
+    var d = JSON.parse(raw.textContent);
+    new Chart(document.getElementById('sparkline'), {
+        type: 'line',
+        data: {
+            labels: d.labels,
+            datasets: [{
+                data: d.data,
+                borderColor: 'rgba(255,255,255,0.9)',
+                backgroundColor: 'rgba(255,255,255,0.15)',
+                borderWidth: 2,
+                pointRadius: 2,
+                fill: true,
+                tension: 0.4,
+            }],
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            scales: {
+                x: { display: false },
+                y: { display: false },
+            },
+        },
+    });
+})();
+</script>
+{% endif %}
+
 {% endblock %}
