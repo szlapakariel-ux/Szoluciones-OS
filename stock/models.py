@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.db import models
+from django.utils import timezone
 
 from core.models import TenantOwnedModel
 
@@ -69,7 +70,30 @@ class MovimientoStock(TenantOwnedModel):
     tipo = models.CharField("Tipo", max_length=10, choices=Tipo.choices)
     cantidad = models.DecimalField("Cantidad", max_digits=12, decimal_places=2)
     motivo = models.CharField("Motivo", max_length=160, blank=True)
-    fecha = models.DateTimeField("Fecha", auto_now_add=True)
+    fecha = models.DateTimeField("Fecha", default=timezone.now)
+
+    # FK de origen — permite inlines en Venta, Compra y Producción
+    venta_origen = models.ForeignKey(
+        "ventas.Venta",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="movimientos_stock",
+        verbose_name="Venta de origen",
+    )
+    compra_origen = models.ForeignKey(
+        "compras.Compra",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="movimientos_stock",
+        verbose_name="Compra de origen",
+    )
+    produccion_origen = models.ForeignKey(
+        "produccion.ProduccionRealizada",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="movimientos_stock",
+        verbose_name="Producción de origen",
+    )
 
     class Meta:
         verbose_name = "Movimiento de stock"

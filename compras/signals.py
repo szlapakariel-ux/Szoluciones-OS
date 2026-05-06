@@ -16,6 +16,7 @@ def itemcompra_post_save(sender, instance: ItemCompra, created, **kwargs):
         tipo=MovimientoStock.Tipo.INGRESO,
         cantidad=instance.cantidad,
         motivo=f"Compra #{instance.compra_id}",
+        compra_origen=instance.compra,
     )
 
 
@@ -27,4 +28,5 @@ def itemcompra_post_delete(sender, instance: ItemCompra, **kwargs):
         tipo=MovimientoStock.Tipo.EGRESO,
         cantidad=instance.cantidad,
         motivo=f"Reversa por borrado de ítem de compra #{instance.compra_id}",
+        compra_origen=instance.compra,
     )

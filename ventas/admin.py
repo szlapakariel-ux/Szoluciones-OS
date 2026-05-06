@@ -3,6 +3,7 @@ from unfold.admin import TabularInline
 
 from caja.models import MovimientoCaja
 from core.admin import TenantOwnedAdmin
+from stock.models import MovimientoStock
 
 from .models import ItemVenta, Venta
 
@@ -15,6 +16,21 @@ class ItemVentaInline(TabularInline):
     tab = True
 
 
+class MovimientoStockVentaInline(TabularInline):
+    model = MovimientoStock
+    fk_name = "venta_origen"
+    extra = 0
+    fields = ("producto", "tipo", "cantidad", "motivo", "fecha")
+    readonly_fields = ("producto", "tipo", "cantidad", "motivo", "fecha")
+    can_delete = False
+    tab = True
+    verbose_name = "Movimiento de stock"
+    verbose_name_plural = "Movimientos de stock generados"
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(Venta)
 class VentaAdmin(TenantOwnedAdmin):
     list_display = ("fecha", "cliente", "total", "metodo_pago", "items_count")
@@ -22,7 +38,7 @@ class VentaAdmin(TenantOwnedAdmin):
     search_fields = ("cliente__nombre", "observaciones")
     autocomplete_fields = ("cliente",)
     date_hierarchy = "fecha"
-    inlines = [ItemVentaInline]
+    inlines = [ItemVentaInline, MovimientoStockVentaInline]
     readonly_fields = ("total",)
     fieldsets = (
         ("Datos de la venta", {"fields": ("cliente", "fecha", "metodo_pago")}),

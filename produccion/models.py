@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.db import models
+from django.utils import timezone
 
 from core.models import TenantOwnedModel
 from stock.models import Producto
@@ -19,7 +20,7 @@ class Receta(TenantOwnedModel):
         max_digits=12,
         decimal_places=2,
         default=Decimal("1"),
-        help_text="Cantidad de producto resultante que produce esta receta.",
+        help_text="Cantidad de producto resultante que produce esta receta (un lote).",
     )
     instrucciones = models.TextField("Instrucciones", blank=True)
 
@@ -66,3 +67,37 @@ class Ingrediente(TenantOwnedModel):
 
     def __str__(self):
         return f"{self.producto} × {self.cantidad}"
+
+
+class ProduccionRealizada(TenantOwnedModel):
+    receta = models.ForeignKey(
+        Receta,
+        on_delete=models.PROTECT,
+        related_name="producciones",
+        verbose_name="Receta",
+    )
+    cantidad_lotes = models.DecimalField(
+        "Cantidad de lotes",
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("1"),
+        help_text="Cuántas veces se ejecuta la receta. Ej: 2 = doble de ingredientes, doble de rendimiento.",
+    )
+    fecha = models.DateTimeField("Fecha de producción", default=timezone.now)
+    observaciones = models.TextField("Observaciones", blank=True)
+
+    class Meta:
+        verbose_name = "Producción realizada"
+        verbose_name_plural = "Producciones realizadas"
+        ordering = ["-fecha"]
+
+    def __str__(self):
+        return f"{self.receta} × {self.cantidad_lotes} lote(s) — {self.fecha:%d/%m/%Y}"
+
+    @property
+    def cantidad_producida(self) -> Decimal:
+        return self.receta.rendimiento * self.cantidad_lotes
+
+    @property
+    def costo_total_estimado(self) -> Decimal:
+        return self.receta.costo_total * self.cantidad_lotes

@@ -5,6 +5,7 @@ from unfold.admin import TabularInline
 
 from caja.models import MovimientoCaja
 from core.admin import TenantOwnedAdmin
+from stock.models import MovimientoStock
 
 from .models import Compra, ItemCompra, Proveedor
 
@@ -28,6 +29,21 @@ class ItemCompraInline(TabularInline):
     tab = True
 
 
+class MovimientoStockCompraInline(TabularInline):
+    model = MovimientoStock
+    fk_name = "compra_origen"
+    extra = 0
+    fields = ("producto", "tipo", "cantidad", "motivo", "fecha")
+    readonly_fields = ("producto", "tipo", "cantidad", "motivo", "fecha")
+    can_delete = False
+    tab = True
+    verbose_name = "Movimiento de stock"
+    verbose_name_plural = "Movimientos de stock generados"
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(Compra)
 class CompraAdmin(TenantOwnedAdmin):
     list_display = ("fecha", "proveedor", "total", "items_count")
@@ -35,7 +51,7 @@ class CompraAdmin(TenantOwnedAdmin):
     search_fields = ("proveedor__nombre", "observaciones")
     autocomplete_fields = ("proveedor",)
     date_hierarchy = "fecha"
-    inlines = [ItemCompraInline]
+    inlines = [ItemCompraInline, MovimientoStockCompraInline]
     readonly_fields = ("total",)
     fieldsets = (
         ("Datos de la compra", {"fields": ("proveedor", "fecha", "observaciones")}),

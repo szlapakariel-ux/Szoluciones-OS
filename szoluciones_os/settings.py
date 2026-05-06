@@ -176,9 +176,14 @@ UNFOLD = {
                         "link": reverse_lazy("admin:compras_compra_changelist"),
                     },
                     {
-                        "title": "Producción",
+                        "title": "Recetas",
                         "icon": "restaurant",
                         "link": reverse_lazy("admin:produccion_receta_changelist"),
+                    },
+                    {
+                        "title": "Ejecutar producción",
+                        "icon": "local_fire_department",
+                        "link": reverse_lazy("admin:produccion_produccionrealizada_changelist"),
                     },
                     {
                         "title": "Clientes",
