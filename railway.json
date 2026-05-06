@@ -1,1 +1,8 @@
-﻿{"build": {"builder": "nixpacks"}, "deploy": {"startCommand": "python manage.py migrate --noinput && gunicorn szoluciones_os.wsgi --bind 0.0.0.0:$PORT"}}
+{
+    "build": {
+          "builder": "nixpacks"
+    },
+    "deploy": {
+          "startCommand": "uv run gunicorn szoluciones_os.wsgi"
+    }
+}
