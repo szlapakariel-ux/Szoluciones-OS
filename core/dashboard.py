@@ -129,10 +129,61 @@ def dashboard_callback(request, context):
     labels_metodos = [_METODO_LABELS.get(m["metodo_pago"], m["metodo_pago"]) for m in metodos_qs]
     data_metodos = [m["count"] for m in metodos_qs]
 
+    # --- Chart 4: Actividad del negocio últimos 30 días por módulo ---
+    from core.models import ActividadNegocio
+
+    hace_30_dias = hoy - timedelta(days=29)
+    MODULOS = ["ventas", "stock", "compras", "caja", "produccion", "clientes", "gastos", "acceso"]
+    MODULO_LABELS = {
+        "ventas": "Ventas", "stock": "Stock", "compras": "Compras",
+        "caja": "Caja", "produccion": "Producción", "clientes": "Clientes",
+        "gastos": "Gastos", "acceso": "Acceso",
+    }
+    MODULO_COLORS = {
+        "ventas":     "rgba(20,184,166,0.80)",
+        "stock":      "rgba(59,130,246,0.80)",
+        "compras":    "rgba(168,85,247,0.80)",
+        "caja":       "rgba(234,179,8,0.80)",
+        "produccion": "rgba(249,115,22,0.80)",
+        "clientes":   "rgba(236,72,153,0.80)",
+        "gastos":     "rgba(239,68,68,0.80)",
+        "acceso":     "rgba(107,114,128,0.80)",
+    }
+
+    actividad_qs = (
+        ActividadNegocio.objects
+        .filter(negocio=negocio, fecha__date__gte=hace_30_dias)
+        .annotate(dia=TruncDate("fecha"))
+        .values("dia", "modulo")
+        .annotate(count=Count("id"))
+        .order_by("dia", "modulo")
+    )
+
+    labels_30d = [(hace_30_dias + timedelta(days=i)).strftime("%d/%m") for i in range(30)]
+    dias_30d = [hace_30_dias + timedelta(days=i) for i in range(30)]
+
+    actividad_map = {}
+    for row in actividad_qs:
+        actividad_map[(row["dia"], row["modulo"])] = row["count"]
+
+    datasets_actividad = []
+    for mod in MODULOS:
+        data = [actividad_map.get((d, mod), 0) for d in dias_30d]
+        if any(v > 0 for v in data):
+            datasets_actividad.append({
+                "label": MODULO_LABELS[mod],
+                "data": data,
+                "backgroundColor": MODULO_COLORS[mod],
+                "borderColor": MODULO_COLORS[mod].replace("0.80", "1"),
+                "borderWidth": 1,
+                "borderRadius": 2,
+            })
+
     context["charts"] = json.dumps({
         "ventasDias": {"labels": labels_dias, "data": data_dias},
         "topProductos": {"labels": labels_productos, "data": data_productos},
         "metodosPago": {"labels": labels_metodos, "data": data_metodos},
+        "actividad": {"labels": labels_30d, "datasets": datasets_actividad},
     })
 
     # --- Onboarding checklist (se oculta cuando todo está completo) ---

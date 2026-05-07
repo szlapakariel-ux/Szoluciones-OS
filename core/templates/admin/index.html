@@ -60,6 +60,11 @@
     {% endif %}
 
     {% if charts %}
+    <div class="bg-white dark:bg-base-800 border border-base-200 dark:border-base-700 rounded-xl p-5 shadow-sm mb-4">
+        <h3 class="text-xs font-semibold text-base-500 dark:text-base-300 uppercase tracking-wide mb-4">Actividad últimos 30 días</h3>
+        <canvas id="chartActividad" height="100"></canvas>
+    </div>
+
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <div class="lg:col-span-2 bg-white dark:bg-base-800 border border-base-200 dark:border-base-700 rounded-lg p-5 shadow-sm">
             <h3 class="text-xs font-semibold text-base-500 dark:text-base-300 uppercase tracking-wide mb-4">Ventas últimos 7 días</h3>
@@ -105,6 +110,29 @@
         Chart.defaults.color = fg;
         Chart.defaults.font.family = 'inherit';
         Chart.defaults.font.size = 12;
+
+        // Actividad por módulo (últimos 30 días)
+        if (d.actividad && d.actividad.datasets.length) {
+            new Chart(document.getElementById('chartActividad'), {
+                type: 'bar',
+                data: {
+                    labels: d.actividad.labels,
+                    datasets: d.actividad.datasets.map(function(ds) {
+                        return Object.assign({}, ds, { borderRadius: 2 });
+                    }),
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'bottom', labels: { color: fg, boxWidth: 12, padding: 10 } },
+                    },
+                    scales: {
+                        x: { stacked: true, grid: { color: grid }, ticks: { color: fg, maxTicksLimit: 10 } },
+                        y: { stacked: true, grid: { color: grid }, ticks: { color: fg, stepSize: 1 } },
+                    },
+                },
+            });
+        }
 
         // Ventas por día
         new Chart(document.getElementById('chartVentasDias'), {
