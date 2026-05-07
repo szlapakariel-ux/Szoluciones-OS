@@ -18,7 +18,6 @@ class IngredienteInline(TabularInline):
     extra = 1
     fields = ("producto", "cantidad", "subtotal_display")
     readonly_fields = ("subtotal_display",)
-    autocomplete_fields = ("producto",)
     tab = True
 
     def subtotal_display(self, obj):
@@ -30,6 +29,12 @@ class IngredienteInline(TabularInline):
         return "—"
 
     subtotal_display.short_description = "Costo en receta"
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == "producto":
+            from stock.models import Producto, TipoProducto
+            kwargs["queryset"] = Producto.objects.filter(tipo=TipoProducto.INSUMO, activo=True)
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
 @admin.register(Receta)
