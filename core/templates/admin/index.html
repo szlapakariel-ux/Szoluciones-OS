@@ -39,13 +39,21 @@
     </div>
     {% endif %}
 
+    {% if hero_kpi %}
+    <div class="bg-primary-600 dark:bg-primary-700 rounded-xl p-6 mb-4 shadow-md">
+        <div class="text-base font-semibold text-primary-100 uppercase tracking-wide mb-1">Ventas de hoy</div>
+        <div class="text-5xl font-bold text-white mb-2 leading-none">{{ hero_kpi.metric }}</div>
+        <div class="text-sm text-primary-200">{{ hero_kpi.footer }}</div>
+    </div>
+    {% endif %}
+
     {% if kpis %}
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+    <div class="grid grid-cols-3 gap-3 mb-8">
         {% for kpi in kpis %}
-        <div class="bg-white dark:bg-base-800 border border-base-200 dark:border-base-700 rounded-lg p-5 shadow-sm">
-            <div class="text-sm text-base-500 dark:text-base-300 font-medium uppercase tracking-wide mb-2">{{ kpi.title }}</div>
-            <div class="text-3xl font-bold text-primary-600 dark:text-primary-400 mb-1">{{ kpi.metric }}</div>
-            <div class="text-xs text-base-500 dark:text-base-400">{{ kpi.footer }}</div>
+        <div class="bg-white dark:bg-base-800 border border-base-200 dark:border-base-700 rounded-xl p-4 shadow-sm">
+            <div class="text-xs text-base-500 dark:text-base-300 font-semibold uppercase tracking-wide mb-2">{{ kpi.title }}</div>
+            <div class="text-xl font-bold text-base-800 dark:text-base-100 mb-1 leading-tight">{{ kpi.metric }}</div>
+            <div class="text-xs text-base-400 dark:text-base-500 leading-snug">{{ kpi.footer }}</div>
         </div>
         {% endfor %}
     </div>

@@ -24,6 +24,7 @@ _METODO_LABELS = {
 
 def dashboard_callback(request, context):
     """KPIs y datos de gráficos para la home del admin."""
+    context["hero_kpi"] = None
     context["kpis"] = []
     context["charts"] = None
     context["trial_warning"] = None
@@ -59,26 +60,33 @@ def dashboard_callback(request, context):
         .count()
     )
 
+    ventas_hoy_count = ventas_hoy.count()
+    ventas_semana_total = (
+        Venta.objects.all_tenants()
+        .filter(negocio=negocio, fecha__date__gte=inicio_semana)
+        .aggregate(t=Sum("total"))["t"] or Decimal("0")
+    )
+
+    context["hero_kpi"] = {
+        "metric": _format_ars(ventas_hoy_total),
+        "footer": f"{ventas_hoy_count} venta{'s' if ventas_hoy_count != 1 else ''} · {hoy.strftime('%d/%m/%Y')}",
+    }
+
     context["kpis"] = [
-        {
-            "title": "Ventas de hoy",
-            "metric": _format_ars(ventas_hoy_total),
-            "footer": f"{ventas_hoy.count()} venta(s) hoy",
-        },
         {
             "title": "Caja actual",
             "metric": _format_ars(caja_actual),
-            "footer": "Ingresos − egresos acumulados",
+            "footer": "Ingresos − egresos totales",
         },
         {
-            "title": "Productos bajo stock mínimo",
+            "title": "Esta semana",
+            "metric": _format_ars(ventas_semana_total),
+            "footer": f"Desde el {inicio_semana.strftime('%d/%m')}",
+        },
+        {
+            "title": "Bajo stock",
             "metric": str(productos_bajo_stock),
-            "footer": "Reponer pronto",
-        },
-        {
-            "title": "Semana en curso",
-            "metric": inicio_semana.strftime("%d/%m"),
-            "footer": "Lunes de esta semana",
+            "footer": "Productos a reponer",
         },
     ]
 
