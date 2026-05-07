@@ -33,9 +33,11 @@ def venta_rapida(request):
         subtotal = Decimal(str(item["precio"])) * Decimal(str(item["cantidad"]))
         item["subtotal_fmt"] = _fmt(subtotal)
 
+    from stock.models import TipoProducto
+
     productos = (
         Producto.objects.all_tenants()
-        .filter(negocio=negocio, activo=True)
+        .filter(negocio=negocio, activo=True, tipo=TipoProducto.VENTA)
         .annotate(total_vendido=Coalesce(Sum("items_venta__cantidad"), Value(Decimal("0"))))
         .order_by("-total_vendido", "nombre")
     )

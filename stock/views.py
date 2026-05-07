@@ -2,8 +2,8 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.shortcuts import redirect, render
-from django.views.decorators.http import require_http_methods
+from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.http import require_http_methods, require_POST
 
 
 @login_required(login_url="/admin/login/")
@@ -14,7 +14,7 @@ def producto_rapido(request):
     if not negocio:
         return redirect("/admin/")
 
-    from stock.models import Producto, UnidadMedida
+    from stock.models import Producto, TipoProducto, UnidadMedida
 
     if request.method == "POST":
         nombre = (request.POST.get("nombre") or "").strip()
@@ -44,6 +44,7 @@ def producto_rapido(request):
             presentacion=presentacion,
             unidad_medida=unidad,
             precio_venta=precio,
+            tipo=TipoProducto.VENTA,
         )
 
         cart = request.session.get("cart", [])
@@ -71,7 +72,7 @@ def stock_lista(request):
     if not negocio:
         return redirect("/admin/")
 
-    from stock.models import Producto
+    from stock.models import Producto, TipoProducto
 
     qs = (
         Producto.objects.all_tenants()
@@ -83,10 +84,43 @@ def stock_lista(request):
     for p in productos:
         p.bajo_stock = p.stock_actual < p.stock_minimo
 
+    sin_clasificar = [p for p in productos if p.tipo is None]
+    de_venta = [p for p in productos if p.tipo == TipoProducto.VENTA]
+    insumos = [p for p in productos if p.tipo == TipoProducto.INSUMO]
+
     alerta_count = sum(1 for p in productos if p.bajo_stock)
 
     return render(request, "app/stock.html", {
         "active_tab": "stock",
-        "productos": productos,
+        "sin_clasificar": sin_clasificar,
+        "de_venta": de_venta,
+        "insumos": insumos,
         "alerta_count": alerta_count,
+        "total": len(productos),
     })
+
+
+@require_POST
+@login_required(login_url="/admin/login/")
+def producto_clasificar(request, pk):
+    negocio = getattr(request.user, "negocio", None)
+    if not negocio:
+        return redirect("/admin/")
+
+    from stock.models import Producto, TipoProducto
+
+    tipo = request.POST.get("tipo")
+    valid_tipos = {c[0] for c in TipoProducto.choices}
+    if tipo not in valid_tipos:
+        messages.error(request, "Tipo inválido.")
+        return redirect("app_stock")
+
+    producto = get_object_or_404(
+        Producto.objects.all_tenants().filter(negocio=negocio), pk=pk
+    )
+    producto.tipo = tipo
+    producto.save(update_fields=["tipo"])
+
+    label = "venta" if tipo == TipoProducto.VENTA else "insumo"
+    messages.success(request, f"'{producto.nombre}' marcado como {label}.")
+    return redirect("app_stock")

@@ -9,6 +9,7 @@ from .models import MovimientoStock, Producto
 class ProductoAdmin(TenantOwnedAdmin):
     list_display = (
         "nombre",
+        "tipo",
         "codigo",
         "unidad_medida",
         "stock_actual",
@@ -16,10 +17,10 @@ class ProductoAdmin(TenantOwnedAdmin):
         "precio_venta",
         "activo",
     )
-    list_filter = ("activo", "unidad_medida")
+    list_filter = ("tipo", "activo", "unidad_medida")
     search_fields = ("nombre", "codigo")
     fieldsets = (
-        ("Identificación", {"fields": ("nombre", "codigo", "presentacion", "unidad_medida", "activo")}),
+        ("Identificación", {"fields": ("nombre", "tipo", "codigo", "presentacion", "unidad_medida", "activo")}),
         ("Stock", {"fields": ("stock_actual", "stock_minimo")}),
         ("Precios", {"fields": ("costo", "precio_venta")}),
     )

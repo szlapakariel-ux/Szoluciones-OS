@@ -16,6 +16,11 @@ class UnidadMedida(models.TextChoices):
     CAJA = "CA", "Caja"
 
 
+class TipoProducto(models.TextChoices):
+    VENTA = "VENTA", "Producto de venta"
+    INSUMO = "INSUMO", "Insumo"
+
+
 _UNIDAD_CORTA = {
     "UN": "unidad",
     "KG": "kg",
@@ -30,6 +35,14 @@ _UNIDAD_CORTA = {
 class Producto(TenantOwnedModel):
     nombre = models.CharField("Nombre", max_length=120)
     codigo = models.CharField("Código", max_length=40, blank=True)
+    tipo = models.CharField(
+        "Tipo",
+        max_length=10,
+        choices=TipoProducto.choices,
+        null=True,
+        blank=True,
+        help_text='Vacío = sin clasificar. Asignalo en /app/stock/ para que aparezca en POS o en recetas.',
+    )
     presentacion = models.CharField(
         "Presentación",
         max_length=80,

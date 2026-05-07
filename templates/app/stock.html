@@ -4,6 +4,16 @@
 
 {% block content %}
 
+{% if messages %}
+{% for msg in messages %}
+<div class="mb-3 px-3 py-2 rounded-lg text-sm
+     {% if 'error' in msg.tags %}bg-red-50 text-red-700 border border-red-200
+     {% else %}bg-green-50 text-green-700 border border-green-200{% endif %}">
+    {{ msg }}
+</div>
+{% endfor %}
+{% endif %}
+
 {% if alerta_count > 0 %}
 <div class="bg-amber-50 border border-amber-300 rounded-xl p-3 mb-4 flex items-center gap-2.5">
     <svg class="w-5 h-5 text-amber-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -16,15 +26,59 @@
 </div>
 {% endif %}
 
+{% if sin_clasificar %}
+<div class="mb-6">
+    <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-bold text-gray-800">Sin clasificar
+            <span class="ml-1 inline-block bg-orange-100 text-orange-700 text-xs font-bold px-2 py-0.5 rounded-full align-middle">{{ sin_clasificar|length }}</span>
+        </h2>
+    </div>
+    <p class="text-xs text-gray-500 mb-3">Tocá un botón para mover el producto al stock que corresponde.</p>
+
+    <div class="space-y-2">
+        {% for p in sin_clasificar %}
+        <div class="bg-white rounded-xl border border-orange-200 shadow-sm px-4 py-3">
+            <div class="flex items-center justify-between mb-2">
+                <div class="font-medium text-gray-800 text-base truncate flex-1 mr-3">{{ p.nombre }}</div>
+                <div class="text-sm text-gray-500 shrink-0">
+                    {{ p.stock_actual|floatformat:"-2" }} {{ p.unidad_corta }}
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+                <form method="post" action="{% url 'app_producto_clasificar' p.pk %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="tipo" value="VENTA">
+                    <button type="submit"
+                            class="w-full bg-primary-600 text-white font-semibold py-2.5 rounded-lg text-sm active:bg-primary-700 transition-colors">
+                        Producto de venta
+                    </button>
+                </form>
+                <form method="post" action="{% url 'app_producto_clasificar' p.pk %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="tipo" value="INSUMO">
+                    <button type="submit"
+                            class="w-full bg-purple-600 text-white font-semibold py-2.5 rounded-lg text-sm active:bg-purple-700 transition-colors">
+                        Insumo
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
 <div class="flex items-center justify-between mb-3">
-    <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Productos</h2>
+    <h2 class="text-sm font-bold text-primary-700">Productos de venta
+        <span class="ml-1 inline-block bg-primary-100 text-primary-700 text-xs font-bold px-2 py-0.5 rounded-full align-middle">{{ de_venta|length }}</span>
+    </h2>
     <a href="/admin/stock/producto/add/"
        class="text-xs text-primary-600 font-semibold">+ Agregar</a>
 </div>
 
-{% if productos %}
-<div class="space-y-2">
-    {% for p in productos %}
+{% if de_venta %}
+<div class="space-y-2 mb-6">
+    {% for p in de_venta %}
     <div class="bg-white rounded-xl border shadow-sm px-4 py-3
          {% if p.bajo_stock %}border-amber-300{% else %}border-gray-100{% endif %}">
         <div class="flex items-center justify-between">
@@ -32,20 +86,75 @@
             <div class="font-bold text-lg shrink-0 leading-tight
                  {% if p.bajo_stock %}text-amber-500{% else %}text-primary-600{% endif %}">
                 {{ p.stock_actual|floatformat:"-2" }}
-                <span class="text-xs font-normal text-gray-400">{{ p.unidad_medida }}</span>
+                <span class="text-xs font-normal text-gray-400">{{ p.unidad_corta }}</span>
             </div>
         </div>
         <div class="flex items-center justify-between mt-0.5">
             <span class="text-xs {% if p.bajo_stock %}text-amber-500 font-medium{% else %}text-gray-400{% endif %}">
-                Mín: {{ p.stock_minimo|floatformat:"-2" }} {{ p.unidad_medida }}
+                Mín: {{ p.stock_minimo|floatformat:"-2" }} {{ p.unidad_corta }}
                 {% if p.bajo_stock %} — Reponer{% endif %}
             </span>
-            <span class="text-xs text-gray-400">${{ p.precio_venta|floatformat:2 }}</span>
+            <div class="flex items-center gap-3">
+                <span class="text-xs text-gray-400">${{ p.precio_venta|floatformat:2 }}</span>
+                <form method="post" action="{% url 'app_producto_clasificar' p.pk %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="tipo" value="INSUMO">
+                    <button type="submit" class="text-xs text-purple-600 font-semibold active:text-purple-800">
+                        → Insumo
+                    </button>
+                </form>
+            </div>
         </div>
     </div>
     {% endfor %}
 </div>
 {% else %}
+<p class="text-center text-gray-400 text-sm py-3 mb-6">No hay productos de venta.</p>
+{% endif %}
+
+<div class="flex items-center justify-between mb-3">
+    <h2 class="text-sm font-bold text-purple-700">Insumos
+        <span class="ml-1 inline-block bg-purple-100 text-purple-700 text-xs font-bold px-2 py-0.5 rounded-full align-middle">{{ insumos|length }}</span>
+    </h2>
+</div>
+
+{% if insumos %}
+<div class="space-y-2">
+    {% for p in insumos %}
+    <div class="bg-white rounded-xl border shadow-sm px-4 py-3
+         {% if p.bajo_stock %}border-amber-300{% else %}border-gray-100{% endif %}">
+        <div class="flex items-center justify-between">
+            <div class="font-medium text-gray-800 text-sm truncate flex-1 mr-3">{{ p.nombre }}</div>
+            <div class="font-bold text-lg shrink-0 leading-tight
+                 {% if p.bajo_stock %}text-amber-500{% else %}text-purple-600{% endif %}">
+                {{ p.stock_actual|floatformat:"-2" }}
+                <span class="text-xs font-normal text-gray-400">{{ p.unidad_corta }}</span>
+            </div>
+        </div>
+        <div class="flex items-center justify-between mt-0.5">
+            <span class="text-xs {% if p.bajo_stock %}text-amber-500 font-medium{% else %}text-gray-400{% endif %}">
+                Mín: {{ p.stock_minimo|floatformat:"-2" }} {{ p.unidad_corta }}
+                {% if p.bajo_stock %} — Reponer{% endif %}
+            </span>
+            <div class="flex items-center gap-3">
+                <span class="text-xs text-gray-400">Costo ${{ p.costo|floatformat:2 }}</span>
+                <form method="post" action="{% url 'app_producto_clasificar' p.pk %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="tipo" value="VENTA">
+                    <button type="submit" class="text-xs text-primary-600 font-semibold active:text-primary-800">
+                        → Venta
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="text-center text-gray-400 text-sm py-3">No hay insumos.</p>
+{% endif %}
+
+{% if total == 0 %}
 <p class="text-center text-gray-400 text-sm py-6">No hay productos cargados.</p>
 {% endif %}
 
