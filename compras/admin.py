@@ -29,6 +29,7 @@ class ItemCompraInline(TabularInline):
     tab = True
 
 
+
 class MovimientoStockCompraInline(TabularInline):
     model = MovimientoStock
     fk_name = "compra_origen"

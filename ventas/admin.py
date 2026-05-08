@@ -16,6 +16,7 @@ class ItemVentaInline(TabularInline):
     tab = True
 
 
+
 class MovimientoStockVentaInline(TabularInline):
     model = MovimientoStock
     fk_name = "venta_origen"

@@ -71,6 +71,14 @@ class TenantOwnedModel(models.Model):
     class Meta:
         abstract = True
 
+    def save(self, *args, **kwargs):
+        if not self.negocio_id:
+            from .managers import get_current_business
+            negocio = get_current_business()
+            if negocio:
+                self.negocio = negocio
+        super().save(*args, **kwargs)
+
 
 class ActividadNegocio(models.Model):
     negocio = models.ForeignKey(Negocio, on_delete=models.CASCADE, related_name="actividades")

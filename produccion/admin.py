@@ -20,6 +20,7 @@ class IngredienteInline(TabularInline):
     readonly_fields = ("subtotal_display",)
     tab = True
 
+
     def subtotal_display(self, obj):
         if obj.pk and obj.producto_id:
             return format_html(
