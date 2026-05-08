@@ -6,8 +6,13 @@ from .models import ActividadNegocio
 
 
 def _log(negocio, modulo, accion):
-    if negocio:
-        ActividadNegocio.objects.create(negocio=negocio, modulo=modulo, accion=accion)
+    if not negocio:
+        return
+    try:
+        ActividadNegocio.objects.create(negocio=negocio, modulo=modulo, accion=accion[:200])
+    except Exception:
+        # No queremos que una falla del log de actividad rompa el save del modelo principal
+        pass
 
 
 # --- Ventas ---
