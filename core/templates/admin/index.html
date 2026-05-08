@@ -93,6 +93,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
     <script>
     (function () {
+        try {
         var raw = document.getElementById('szos-chart-data');
         if (!raw) return;
         var d = JSON.parse(raw.textContent);
@@ -112,7 +113,7 @@
         Chart.defaults.font.size = 12;
 
         // Actividad por módulo (últimos 30 días)
-        if (d.actividad && d.actividad.datasets.length) {
+        if (d.actividad && Array.isArray(d.actividad.datasets) && d.actividad.datasets.length && d.actividad.labels) {
             new Chart(document.getElementById('chartActividad'), {
                 type: 'bar',
                 data: {
@@ -217,6 +218,7 @@
                 },
             });
         }
+        } catch(e) { console.error('Chart error:', e); }
     })();
     </script>
     {% endif %}
