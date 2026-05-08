@@ -93,43 +93,68 @@ class CompraAdmin(TenantOwnedAdmin):
                 )
 
         # Actualización de costos según método configurado en el negocio
-        metodo = getattr(compra.negocio, "metodo_costeo", Negocio.MetodoCosteo.MANUAL)
-        for item in compra.items.select_related("producto").all():
-            producto = item.producto
-            if item.precio_unitario == producto.costo:
-                continue
+        try:
+            metodo = getattr(
+                compra.negocio, "metodo_costeo", Negocio.MetodoCosteo.MANUAL
+            )
+        except Exception:
+            metodo = Negocio.MetodoCosteo.MANUAL
 
-            if metodo == Negocio.MetodoCosteo.PPP:
-                # stock_actual ya fue actualizado por la señal de MovimientoStock;
-                # restamos item.cantidad para obtener el stock previo a esta compra.
-                stock_previo = max(producto.stock_actual - item.cantidad, Decimal("0"))
-                denominador = stock_previo + item.cantidad  # == stock_actual post-compra
-                if denominador > 0:
-                    nuevo_costo = (
-                        (stock_previo * producto.costo + item.cantidad * item.precio_unitario)
-                        / denominador
-                    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        for item in compra.items.select_related("producto").all():
+            try:
+                producto = item.producto
+                if producto is None:
+                    continue
+                # Refrescar desde DB para obtener stock_actual actualizado por señal
+                producto.refresh_from_db(fields=["costo", "stock_actual"])
+                if item.precio_unitario == producto.costo:
+                    continue
+
+                if metodo == Negocio.MetodoCosteo.PPP:
+                    # stock_actual ya fue actualizado por la señal de MovimientoStock;
+                    # restamos item.cantidad para obtener el stock previo a esta compra.
+                    stock_previo = max(
+                        producto.stock_actual - item.cantidad, Decimal("0")
+                    )
+                    denominador = stock_previo + item.cantidad
+                    if denominador > 0:
+                        nuevo_costo = (
+                            (
+                                stock_previo * producto.costo
+                                + item.cantidad * item.precio_unitario
+                            )
+                            / denominador
+                        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    else:
+                        nuevo_costo = item.precio_unitario
+                    producto.costo = nuevo_costo
+                    producto.save(update_fields=["costo"])
+                    messages.info(
+                        request,
+                        f"{producto.nombre}: costo actualizado a {_fmt(nuevo_costo)} (PPP)",
+                    )
                 else:
-                    nuevo_costo = item.precio_unitario
-                producto.costo = nuevo_costo
-                producto.save(update_fields=["costo"])
-                messages.info(
-                    request,
-                    f"{producto.nombre}: costo actualizado a {_fmt(nuevo_costo)} (PPP)",
-                )
-            else:
-                update_url = (
-                    reverse("admin:stock_producto_actualizar_costo")
-                    + f"?pk={producto.pk}&nuevo_costo={item.precio_unitario}"
-                )
-                messages.warning(
-                    request,
-                    format_html(
-                        "{}: costo registrado {} → precio de esta compra {}. "
-                        '<a href="{}">Actualizar costo</a>',
-                        producto.nombre,
-                        _fmt(producto.costo),
-                        _fmt(item.precio_unitario),
-                        update_url,
-                    ),
-                )
+                    try:
+                        update_url = (
+                            reverse("admin:stock_producto_actualizar_costo")
+                            + f"?pk={producto.pk}&nuevo_costo={item.precio_unitario}"
+                        )
+                        messages.warning(
+                            request,
+                            format_html(
+                                "{}: costo registrado {} → precio de esta compra {}. "
+                                '<a href="{}">Actualizar costo</a>',
+                                producto.nombre,
+                                _fmt(producto.costo),
+                                _fmt(item.precio_unitario),
+                                update_url,
+                            ),
+                        )
+                    except Exception:
+                        messages.warning(
+                            request,
+                            f"{producto.nombre}: el precio de compra ({_fmt(item.precio_unitario)}) "
+                            f"difiere del costo registrado ({_fmt(producto.costo)}).",
+                        )
+            except Exception:
+                pass
