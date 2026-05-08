@@ -33,7 +33,9 @@ class IngredienteInline(TabularInline):
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         if db_field.name == "producto":
             from stock.models import Producto, TipoProducto
-            kwargs["queryset"] = Producto.objects.filter(tipo=TipoProducto.INSUMO, activo=True)
+            kwargs["queryset"] = Producto.objects.all_tenants().filter(
+                tipo=TipoProducto.INSUMO, activo=True
+            )
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
