@@ -1,13 +1,21 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.urls import reverse
+from django.utils.html import format_html
 from unfold.admin import TabularInline
 
 from caja.models import MovimientoCaja
 from core.admin import TenantOwnedAdmin
+from core.models import Negocio
 from stock.models import MovimientoStock
 
 from .models import Compra, ItemCompra, Proveedor
+
+
+def _fmt(amount):
+    s = f"{amount:,.2f}"
+    return "$" + s.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 @admin.register(Proveedor)
@@ -27,7 +35,6 @@ class ItemCompraInline(TabularInline):
     fields = ("producto", "cantidad", "precio_unitario")
     autocomplete_fields = ("producto",)
     tab = True
-
 
 
 class MovimientoStockCompraInline(TabularInline):
@@ -83,4 +90,46 @@ class CompraAdmin(TenantOwnedAdmin):
                     concepto=f"Compra a {compra.proveedor}",
                     compra_origen=compra,
                     fecha=compra.fecha,
+                )
+
+        # Actualización de costos según método configurado en el negocio
+        metodo = getattr(compra.negocio, "metodo_costeo", Negocio.MetodoCosteo.MANUAL)
+        for item in compra.items.select_related("producto").all():
+            producto = item.producto
+            if item.precio_unitario == producto.costo:
+                continue
+
+            if metodo == Negocio.MetodoCosteo.PPP:
+                # stock_actual ya fue actualizado por la señal de MovimientoStock;
+                # restamos item.cantidad para obtener el stock previo a esta compra.
+                stock_previo = max(producto.stock_actual - item.cantidad, Decimal("0"))
+                denominador = stock_previo + item.cantidad  # == stock_actual post-compra
+                if denominador > 0:
+                    nuevo_costo = (
+                        (stock_previo * producto.costo + item.cantidad * item.precio_unitario)
+                        / denominador
+                    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                else:
+                    nuevo_costo = item.precio_unitario
+                producto.costo = nuevo_costo
+                producto.save(update_fields=["costo"])
+                messages.info(
+                    request,
+                    f"{producto.nombre}: costo actualizado a {_fmt(nuevo_costo)} (PPP)",
+                )
+            else:
+                update_url = (
+                    reverse("admin:stock_producto_actualizar_costo")
+                    + f"?pk={producto.pk}&nuevo_costo={item.precio_unitario}"
+                )
+                messages.warning(
+                    request,
+                    format_html(
+                        "{}: costo registrado {} → precio de esta compra {}. "
+                        '<a href="{}">Actualizar costo</a>',
+                        producto.nombre,
+                        _fmt(producto.costo),
+                        _fmt(item.precio_unitario),
+                        update_url,
+                    ),
                 )

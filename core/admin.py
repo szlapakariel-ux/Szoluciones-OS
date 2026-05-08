@@ -93,6 +93,13 @@ class NegocioAdmin(ModelAdmin):
                 "description": "Dejá 'Trial hasta' vacío para acceso sin restricción de tiempo.",
             },
         ),
+        (
+            "Configuración de costos",
+            {
+                "fields": ("metodo_costeo",),
+                "description": "Define cómo se actualiza el costo del producto cuando llega una compra con precio distinto.",
+            },
+        ),
     )
 
     def get_queryset(self, request):

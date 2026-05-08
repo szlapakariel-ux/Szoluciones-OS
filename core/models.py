@@ -30,6 +30,19 @@ class Negocio(models.Model):
     # Onboarding
     onboarding_completado = models.BooleanField("Onboarding completado", default=False)
 
+    # Costeo
+    class MetodoCosteo(models.TextChoices):
+        MANUAL = "MANUAL", "Manual (alerta al cambiar)"
+        PPP = "PPP", "Promedio ponderado automático"
+
+    metodo_costeo = models.CharField(
+        "Método de costeo",
+        max_length=10,
+        choices=MetodoCosteo.choices,
+        default=MetodoCosteo.MANUAL,
+        help_text="MANUAL: muestra alerta cuando el precio de compra difiere del costo. PPP: actualiza el costo automáticamente con promedio ponderado.",
+    )
+
     class Meta:
         verbose_name = "Negocio"
         verbose_name_plural = "Negocios"
