@@ -19,18 +19,8 @@ class TenantOwnedAdmin(ModelAdmin):
         return qs.none()
 
     def save_model(self, request, obj, form, change):
-        if not getattr(obj, "negocio_id", None):
-            if request.user.negocio_id:
-                obj.negocio = request.user.negocio
-            elif request.user.is_superuser:
-                # Superuser sin negocio: intentar tomar negocio de la URL o abortar con mensaje claro
-                from django.contrib import messages as dj_messages
-                from django.core.exceptions import PermissionDenied
-                dj_messages.error(
-                    request,
-                    "Superusuario sin negocio asignado. Asigná un negocio a tu usuario en /admin/core/usuario/ para poder crear registros.",
-                )
-                raise PermissionDenied("Superuser sin negocio no puede crear registros de negocio.")
+        if not getattr(obj, "negocio_id", None) and request.user.negocio_id:
+            obj.negocio = request.user.negocio
         super().save_model(request, obj, form, change)
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
