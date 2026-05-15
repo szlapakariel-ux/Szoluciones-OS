@@ -124,16 +124,17 @@ class Command(BaseCommand):
         usr.user_permissions.set(perms)
 
         # --- Productos ---
+        from stock.models import TipoProducto
         productos_data = [
-            ("Pan francés", "PAN001", "KG", "1500", "300", "200"),
-            ("Medialunas", "MED001", "DC", "3000", "1200", "180"),
-            ("Harina 000", "HAR000", "KG", "1200", "800", "10"),
-            ("Manteca", "MAN001", "KG", "4500", "3500", "5"),
-            ("Café molido 250g", "CAF250", "UN", "3500", "2200", "20"),
+            ("Pan francés",     "PAN001", "KG", "1500", "300",  "200", TipoProducto.VENTA),
+            ("Medialunas",      "MED001", "DC", "3000", "1200", "180", TipoProducto.VENTA),
+            ("Harina 000",      "HAR000", "KG", "1200", "800",  "10",  TipoProducto.INSUMO),
+            ("Manteca",         "MAN001", "KG", "4500", "3500", "5",   TipoProducto.INSUMO),
+            ("Café molido 250g","CAF250", "UN", "3500", "2200", "20",  TipoProducto.VENTA),
         ]
         productos = {}
-        for nombre, codigo, unidad, precio, costo, stock_min in productos_data:
-            p, _ = Producto.objects.all_tenants().get_or_create(
+        for nombre, codigo, unidad, precio, costo, stock_min, tipo in productos_data:
+            p, created = Producto.objects.all_tenants().get_or_create(
                 negocio=negocio,
                 codigo=codigo,
                 defaults={
@@ -142,8 +143,13 @@ class Command(BaseCommand):
                     "precio_venta": Decimal(precio),
                     "costo": Decimal(costo),
                     "stock_minimo": Decimal(stock_min),
+                    "tipo": tipo,
                 },
             )
+            # Actualizar tipo si ya existía sin clasificar
+            if not created and not p.tipo:
+                p.tipo = tipo
+                p.save(update_fields=["tipo"])
             productos[codigo] = p
         self.stdout.write(f"[OK] {len(productos)} productos")
 

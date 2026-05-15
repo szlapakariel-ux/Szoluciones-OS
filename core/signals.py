@@ -107,11 +107,11 @@ def log_cliente_delete(sender, instance, **kwargs):
 @receiver(post_save, sender="gastos.GastoFijo")
 def log_gasto_save(sender, instance, created, **kwargs):
     if created:
-        _log(instance.negocio, "gastos", f"Gasto fijo creado: {instance.nombre}")
+        _log(instance.negocio, "gastos", f"Gasto fijo creado: {instance.concepto}")
 
 @receiver(post_delete, sender="gastos.GastoFijo")
 def log_gasto_delete(sender, instance, **kwargs):
-    _log(instance.negocio, "gastos", f"Gasto fijo eliminado: {instance.nombre}")
+    _log(instance.negocio, "gastos", f"Gasto fijo eliminado: {instance.concepto}")
 
 
 # --- Acceso ---
