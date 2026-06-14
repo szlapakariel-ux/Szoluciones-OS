@@ -23,6 +23,7 @@ class ProductoAdmin(TenantOwnedAdmin):
         "unidad_medida",
         "stock_actual",
         "stock_minimo",
+        "costo",
         "precio_venta",
         "activo",
     )
