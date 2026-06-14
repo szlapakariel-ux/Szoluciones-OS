@@ -95,7 +95,7 @@
                 {% if p.bajo_stock %} — Reponer{% endif %}
             </span>
             <div class="flex items-center gap-3">
-                <span class="text-xs text-gray-400">${{ p.precio_venta|floatformat:2 }}</span>
+                <span class="text-xs text-gray-400">C ${{ p.costo|floatformat:2 }} · V ${{ p.precio_venta|floatformat:2 }}</span>
                 <form method="post" action="{% url 'app_producto_clasificar' p.pk %}">
                     {% csrf_token %}
                     <input type="hidden" name="tipo" value="INSUMO">
