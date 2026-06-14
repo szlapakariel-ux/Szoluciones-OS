@@ -2,6 +2,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib import admin, messages
 from django.http import HttpResponseRedirect
+from django.utils.html import format_html
 from django.urls import path, reverse
 
 from core.admin import TenantOwnedAdmin
@@ -23,7 +24,7 @@ class ProductoAdmin(TenantOwnedAdmin):
         "unidad_medida",
         "stock_actual",
         "stock_minimo",
-        "costo",
+        "costo_display",
         "precio_venta",
         "activo",
     )
@@ -35,6 +36,19 @@ class ProductoAdmin(TenantOwnedAdmin):
         ("Precios", {"fields": ("costo", "precio_venta")}),
     )
     readonly_fields = ("stock_actual",)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related("recetas")
+
+    def costo_display(self, obj):
+        receta = obj.recetas.first()
+        if receta:
+            return format_html(
+                '{} <span style="font-size:10px;color:#6b7280">(receta)</span>',
+                _fmt(receta.costo_unitario),
+            )
+        return _fmt(obj.costo)
+    costo_display.short_description = "Costo unit."
 
     def get_urls(self):
         urls = super().get_urls()
