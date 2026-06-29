@@ -126,13 +126,15 @@ class AdminCompraConItemsTest(TestCase):
         self.assertNotEqual(response.status_code, 500)
 
     def test_post_compra_con_item_redirige_sin_500(self):
-        """POST válido de Compra+ítem debe redirigir (302) y no dar 500."""
+        """POST válido de Compra+ítem debe redirigir con 302 (guardado exitoso en Django Admin)."""
         response = self._post_compra()
-        # Django Admin redirige a changelist tras un guardado exitoso
-        self.assertNotEqual(response.status_code, 500)
-        self.assertIn(response.status_code, [200, 302],
-                      f"Se esperaba 200 o 302, se obtuvo {response.status_code}. "
-                      f"Content snippet: {response.content[:500]!r}")
+        self.assertEqual(
+            response.status_code, 302,
+            f"Se esperaba 302 (redirect tras guardado exitoso), "
+            f"se obtuvo {response.status_code}. "
+            f"Un 200 indica formulario con errores. "
+            f"Content snippet: {response.content[:800]!r}",
+        )
 
     def test_post_compra_persiste_en_bd(self):
         """Después del POST, la Compra debe existir en la BD."""
@@ -258,11 +260,15 @@ class AdminRecetaConIngredientesTest(TestCase):
         self.assertNotEqual(response.status_code, 500)
 
     def test_post_receta_con_ingrediente_redirige_sin_500(self):
-        """POST válido de Receta+ingrediente debe redirigir y no dar 500."""
+        """POST válido de Receta+ingrediente debe redirigir con 302 (guardado exitoso en Django Admin)."""
         response = self._post_receta()
-        self.assertNotEqual(response.status_code, 500)
-        self.assertIn(response.status_code, [200, 302],
-                      f"Se esperaba 200 o 302, se obtuvo {response.status_code}.")
+        self.assertEqual(
+            response.status_code, 302,
+            f"Se esperaba 302 (redirect tras guardado exitoso), "
+            f"se obtuvo {response.status_code}. "
+            f"Un 200 indica formulario con errores. "
+            f"Content snippet: {response.content[:800]!r}",
+        )
 
     def test_post_receta_persiste_en_bd(self):
         """Después del POST, la Receta debe existir en la BD."""
@@ -485,28 +491,60 @@ class AdminMiddlewareNegocioTest(TestCase):
         )
 
     def test_queryset_compra_filtrado_por_negocio(self):
-        """El admin de Compras lista sólo los objetos del negocio del usuario."""
-        # Crear una Compra para negocio_a y otra para negocio_b
-        insumo_a = _producto(self.negocio_a, "Insumo A", tipo=TipoProducto.INSUMO)
-        insumo_b = _producto(self.negocio_b, "Insumo B", tipo=TipoProducto.INSUMO)
+        """El admin de Compras lista objetos de negocio_a pero NO los de negocio_b."""
+        # Nombres inequívocos para evitar coincidencias accidentales entre A y B
+        proveedor_solo_a = _proveedor(self.negocio_a, "ProveedorEXCLUSIVO_NEGOCIO_A_xyz")
+        proveedor_solo_b = _proveedor(self.negocio_b, "ProveedorEXCLUSIVO_NEGOCIO_B_xyz")
 
-        compra_a = Compra.objects.all_tenants().create(
+        Compra.objects.all_tenants().create(
             negocio=self.negocio_a,
-            proveedor=self.proveedor_a,
+            proveedor=proveedor_solo_a,
             fecha=timezone.now(),
         )
-        compra_b = Compra.objects.all_tenants().create(
+        Compra.objects.all_tenants().create(
             negocio=self.negocio_b,
-            proveedor=self.proveedor_b,
+            proveedor=proveedor_solo_b,
             fecha=timezone.now(),
         )
 
-        # user_a accede al changelist — sólo debe ver compras de negocio_a
+        # user_a (pertenece a negocio_a) accede al changelist
         response = self.client.get("/admin/compras/compra/")
         self.assertEqual(response.status_code, 200)
 
-        # user_a es superusuario con negocio_a: TenantOwnedAdmin.get_queryset
-        # filtra por negocio cuando negocio_id está asignado
-        content = response.content.decode("utf-8", errors="replace")
-        # La compra_a debería estar en el listado
-        self.assertIn(str(self.proveedor_a.nombre), content)
+        # Verificación via queryset del contexto Admin (más confiable que HTML):
+        # el changelist_view expone el queryset en response.context["cl"].queryset
+        cl = response.context.get("cl")
+        if cl is not None:
+            qs = cl.queryset
+            pks_en_lista = set(qs.values_list("pk", flat=True))
+            compra_a_qs = Compra.objects.all_tenants().filter(
+                negocio=self.negocio_a, proveedor=proveedor_solo_a
+            )
+            compra_b_qs = Compra.objects.all_tenants().filter(
+                negocio=self.negocio_b, proveedor=proveedor_solo_b
+            )
+            if compra_a_qs.exists():
+                self.assertIn(
+                    compra_a_qs.first().pk,
+                    pks_en_lista,
+                    "La Compra de negocio_a debe aparecer en el changelist del usuario A.",
+                )
+            if compra_b_qs.exists():
+                self.assertNotIn(
+                    compra_b_qs.first().pk,
+                    pks_en_lista,
+                    "La Compra de negocio_b NO debe aparecer en el changelist del usuario A.",
+                )
+        else:
+            # Fallback: verificación por contenido HTML con tokens inequívocos
+            content = response.content.decode("utf-8", errors="replace")
+            self.assertIn(
+                "ProveedorEXCLUSIVO_NEGOCIO_A_xyz",
+                content,
+                "El proveedor de negocio_a debe aparecer en el changelist.",
+            )
+            self.assertNotIn(
+                "ProveedorEXCLUSIVO_NEGOCIO_B_xyz",
+                content,
+                "El proveedor de negocio_b NO debe aparecer en el changelist del usuario A.",
+            )
