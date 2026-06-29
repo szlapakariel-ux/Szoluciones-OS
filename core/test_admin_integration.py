@@ -1,0 +1,905 @@
+"""
+Tests de integración Admin — PLIC Szoluciones OS
+
+Verifican que un usuario real puede crear:
+ A. Una Compra con ítems via Django Admin (POST real, formset, middleware, persistence)
+ B. Una Receta con ingredientes via Django Admin (POST real, formset, persistence)
+ C. Fallo controlado de auditoría durante un POST Admin: sin 500, con logger.exception
+ D. El middleware CurrentBusinessMiddleware inyecta el negocio correcto en el request
+"""
+
+import logging
+from decimal import Decimal
+from unittest.mock import patch
+
+from django.contrib.auth import get_user_model
+from django.test import Client, TestCase
+from django.utils import timezone
+
+from caja.models import MovimientoCaja
+from compras.models import Compra, ItemCompra, Proveedor
+from core.models import ActividadNegocio, Negocio
+from produccion.models import Ingrediente, Receta
+from stock.models import MovimientoStock, Producto, TipoProducto
+
+User = get_user_model()
+
+
+# ---------------------------------------------------------------------------
+# Fixtures helpers
+# ---------------------------------------------------------------------------
+
+def _negocio(nombre="Test Admin Negocio"):
+    return Negocio.objects.create(nombre=nombre)
+
+
+def _superusuario(negocio, username="admin_test"):
+    """Crea un superusuario con negocio asignado.
+
+    Superusuario evita cualquier restricción de permisos en el admin.
+    Tiene negocio asignado para que CurrentBusinessMiddleware lo ponga
+    en el thread-local y TenantOwnedModel.save() funcione.
+    """
+    user = User.objects.create_superuser(
+        username=username,
+        password="testpass123",
+        email="admin@test.com",
+    )
+    user.negocio = negocio
+    user.save(update_fields=["negocio"])
+    return user
+
+
+def _producto(negocio, nombre, tipo, costo=Decimal("100"), precio_venta=Decimal("200")):
+    return Producto.objects.all_tenants().create(
+        negocio=negocio,
+        nombre=nombre,
+        tipo=tipo,
+        costo=costo,
+        precio_venta=precio_venta,
+    )
+
+
+def _proveedor(negocio, nombre="Proveedor Admin Test"):
+    return Proveedor.objects.all_tenants().create(negocio=negocio, nombre=nombre)
+
+
+# ---------------------------------------------------------------------------
+# A. Compra con ítems desde Django Admin
+# ---------------------------------------------------------------------------
+
+class AdminCompraConItemsTest(TestCase):
+    """POST real a /admin/compras/compra/add/ con inline ItemCompra."""
+
+    def setUp(self):
+        self.negocio = _negocio("Panadería Admin Test")
+        self.user = _superusuario(self.negocio, username="admin_compra")
+        self.proveedor = _proveedor(self.negocio)
+        self.insumo = _producto(
+            self.negocio,
+            "Harina 000 Admin",
+            tipo=TipoProducto.INSUMO,
+            costo=Decimal("800"),
+        )
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _post_compra(self, precio_unitario="1000", cantidad="5"):
+        """POST mínimo válido para crear una Compra con un ItemCompra via Admin.
+
+        Los prefijos de los formsets se determinaron inspeccionando el HTML del
+        GET /admin/compras/compra/add/ con el test client:
+          - ItemCompraInline → prefix "items"
+          - MovimientoStockCompraInline (read-only) → prefix "movimientos_stock"
+        """
+        return self.client.post(
+            "/admin/compras/compra/add/",
+            data={
+                # --- Campos de Compra ---
+                "proveedor": str(self.proveedor.pk),
+                "fecha_0": "2024-03-15",
+                "fecha_1": "10:00:00",
+                "observaciones": "",
+                # --- Management form para ItemCompraInline (prefix: "items") ---
+                "items-TOTAL_FORMS": "1",
+                "items-INITIAL_FORMS": "0",
+                "items-MIN_NUM_FORMS": "0",
+                "items-MAX_NUM_FORMS": "1000",
+                # --- Primera fila del inline ---
+                "items-0-producto": str(self.insumo.pk),
+                "items-0-cantidad": cantidad,
+                "items-0-precio_unitario": precio_unitario,
+                "items-0-id": "",
+                "items-0-DELETE": "",
+                # --- Management form para MovimientoStockCompraInline (prefix: "movimientos_stock", read-only) ---
+                "movimientos_stock-TOTAL_FORMS": "0",
+                "movimientos_stock-INITIAL_FORMS": "0",
+                "movimientos_stock-MIN_NUM_FORMS": "0",
+                "movimientos_stock-MAX_NUM_FORMS": "0",
+            },
+        )
+
+    def test_get_compra_add_devuelve_200(self):
+        """GET a la página de alta de Compra debe responder 200 sin error."""
+        response = self.client.get("/admin/compras/compra/add/")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(response.status_code, 500)
+
+    def test_post_compra_con_item_redirige_sin_500(self):
+        """POST válido de Compra+ítem debe redirigir con 302 (guardado exitoso en Django Admin)."""
+        response = self._post_compra()
+        self.assertEqual(
+            response.status_code, 302,
+            f"Se esperaba 302 (redirect tras guardado exitoso), "
+            f"se obtuvo {response.status_code}. "
+            f"Un 200 indica formulario con errores. "
+            f"Content snippet: {response.content[:800]!r}",
+        )
+
+    def test_post_compra_persiste_en_bd(self):
+        """Después del POST, la Compra debe existir en la BD."""
+        self._post_compra()
+        self.assertTrue(
+            Compra.objects.all_tenants().filter(
+                negocio=self.negocio, proveedor=self.proveedor
+            ).exists(),
+            "La Compra no se encontró en la BD tras el POST Admin.",
+        )
+
+    def test_post_compra_persiste_item_compra(self):
+        """El ItemCompra también debe existir en la BD."""
+        self._post_compra(precio_unitario="1000", cantidad="5")
+        compras = Compra.objects.all_tenants().filter(negocio=self.negocio)
+        self.assertTrue(compras.exists(), "No se encontró ninguna Compra.")
+        compra = compras.first()
+        items = ItemCompra.objects.all_tenants().filter(compra=compra)
+        self.assertTrue(items.exists(), "No se encontró ningún ItemCompra.")
+
+    def test_post_compra_total_correcto(self):
+        """El total calculado por recalcular_total() debe ser cantidad × precio."""
+        self._post_compra(precio_unitario="1000", cantidad="5")
+        compra = Compra.objects.all_tenants().filter(negocio=self.negocio).first()
+        self.assertIsNotNone(compra)
+        # total = 5 × 1000 = 5000
+        self.assertEqual(
+            compra.total, Decimal("5000"),
+            f"Total esperado 5000, obtenido {compra.total}",
+        )
+
+    def test_post_compra_genera_movimiento_stock(self):
+        """La señal de ItemCompra debe crear un MovimientoStock de tipo INGRESO."""
+        self._post_compra(precio_unitario="1000", cantidad="5")
+        movimientos = MovimientoStock.objects.all_tenants().filter(
+            negocio=self.negocio,
+            producto=self.insumo,
+            tipo=MovimientoStock.Tipo.INGRESO,
+        )
+        self.assertTrue(
+            movimientos.exists(),
+            "Debe haber al menos un MovimientoStock INGRESO tras la Compra.",
+        )
+        self.assertEqual(movimientos.first().cantidad, Decimal("5"))
+
+    def test_post_compra_genera_movimiento_caja(self):
+        """CompraAdmin.save_related debe crear un MovimientoCaja de tipo EGRESO."""
+        self._post_compra(precio_unitario="1000", cantidad="5")
+        movs_caja = MovimientoCaja.objects.all_tenants().filter(
+            negocio=self.negocio,
+            tipo=MovimientoCaja.Tipo.EGRESO,
+        )
+        self.assertTrue(
+            movs_caja.exists(),
+            "Debe haber un MovimientoCaja EGRESO creado por CompraAdmin.save_related.",
+        )
+        self.assertEqual(movs_caja.first().monto, Decimal("5000"))
+
+    def test_post_compra_genera_actividad_auditoria(self):
+        """La señal de auditoría debe registrar la Compra en ActividadNegocio."""
+        self._post_compra()
+        self.assertTrue(
+            ActividadNegocio.objects.filter(
+                negocio=self.negocio, modulo="compras"
+            ).exists(),
+            "Debe existir una actividad de auditoría para el módulo 'compras'.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# B. Receta con ingredientes desde Django Admin
+# ---------------------------------------------------------------------------
+
+class AdminRecetaConIngredientesTest(TestCase):
+    """POST real a /admin/produccion/receta/add/ con inline Ingrediente."""
+
+    def setUp(self):
+        self.negocio = _negocio("Panadería Receta Admin Test")
+        self.user = _superusuario(self.negocio, username="admin_receta")
+        self.producto_venta = _producto(
+            self.negocio, "Pan francés Admin", tipo=TipoProducto.VENTA,
+            precio_venta=Decimal("500"),
+        )
+        self.insumo = _producto(
+            self.negocio, "Harina Admin", tipo=TipoProducto.INSUMO,
+            costo=Decimal("800"),
+        )
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _post_receta(self, rendimiento="10", cantidad_ing="2"):
+        """POST mínimo válido para crear una Receta con un Ingrediente via Admin.
+
+        Prefijo confirmado inspeccionando el HTML del GET:
+          ingredientes → IngredienteInline
+        """
+        return self.client.post(
+            "/admin/produccion/receta/add/",
+            data={
+                # --- Campos de Receta ---
+                "nombre": "Receta Admin Test",
+                "producto_resultante": str(self.producto_venta.pk),
+                "rendimiento": rendimiento,
+                "porcentaje_ganancia": "30",
+                "instrucciones": "",
+                # --- Management form para IngredienteInline (prefix: "ingredientes") ---
+                "ingredientes-TOTAL_FORMS": "1",
+                "ingredientes-INITIAL_FORMS": "0",
+                "ingredientes-MIN_NUM_FORMS": "0",
+                "ingredientes-MAX_NUM_FORMS": "1000",
+                # --- Primera fila del inline ---
+                "ingredientes-0-producto": str(self.insumo.pk),
+                "ingredientes-0-cantidad": cantidad_ing,
+                "ingredientes-0-id": "",
+                "ingredientes-0-DELETE": "",
+            },
+        )
+
+    def test_get_receta_add_devuelve_200(self):
+        """GET a la página de alta de Receta debe responder 200."""
+        response = self.client.get("/admin/produccion/receta/add/")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(response.status_code, 500)
+
+    def test_post_receta_con_ingrediente_redirige_sin_500(self):
+        """POST válido de Receta+ingrediente debe redirigir con 302 (guardado exitoso en Django Admin)."""
+        response = self._post_receta()
+        self.assertEqual(
+            response.status_code, 302,
+            f"Se esperaba 302 (redirect tras guardado exitoso), "
+            f"se obtuvo {response.status_code}. "
+            f"Un 200 indica formulario con errores. "
+            f"Content snippet: {response.content[:800]!r}",
+        )
+
+    def test_post_receta_persiste_en_bd(self):
+        """Después del POST, la Receta debe existir en la BD."""
+        self._post_receta()
+        self.assertTrue(
+            Receta.objects.all_tenants().filter(
+                negocio=self.negocio, nombre="Receta Admin Test"
+            ).exists(),
+            "La Receta no se encontró en la BD tras el POST Admin.",
+        )
+
+    def test_post_receta_persiste_ingrediente(self):
+        """El Ingrediente debe existir en la BD vinculado a la Receta."""
+        self._post_receta()
+        receta = Receta.objects.all_tenants().filter(negocio=self.negocio).first()
+        self.assertIsNotNone(receta, "No se encontró la Receta en BD.")
+        ingredientes = Ingrediente.objects.all_tenants().filter(receta=receta)
+        self.assertTrue(
+            ingredientes.exists(),
+            "No se encontró ningún Ingrediente vinculado a la Receta.",
+        )
+
+    def test_post_receta_costo_calculable(self):
+        """Después de crear la receta, costo_total debe ser calculable sin error."""
+        self._post_receta(rendimiento="10", cantidad_ing="2")
+        receta = Receta.objects.all_tenants().filter(negocio=self.negocio).first()
+        if receta is None:
+            self.skipTest("La receta no se creó — ver otros tests para diagnóstico.")
+        # costo_total = 2 × 800 = 1600
+        self.assertEqual(
+            receta.costo_total, Decimal("1600"),
+            f"costo_total esperado 1600, obtenido {receta.costo_total}",
+        )
+        # costo_unitario = 1600 / 10 = 160
+        self.assertEqual(receta.costo_unitario, Decimal("160"))
+
+    def test_post_receta_genera_actividad_auditoria(self):
+        """La señal debe registrar la Receta en ActividadNegocio."""
+        self._post_receta()
+        self.assertTrue(
+            ActividadNegocio.objects.filter(
+                negocio=self.negocio, modulo="produccion"
+            ).exists(),
+            "Debe existir una actividad de auditoría en módulo 'produccion'.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# C. Fallo controlado de auditoría durante POST Admin — sin 500, logger activo
+# ---------------------------------------------------------------------------
+
+class AdminAuditoriaFalloControladoTest(TestCase):
+    """Cuando la auditoría falla durante un POST Admin:
+    - La respuesta NO debe ser 500
+    - El objeto principal SÍ debe guardarse
+    - logger.exception SÍ debe llamarse
+    - El contenido del response NO debe exponer el traceback al usuario
+    """
+
+    def setUp(self):
+        self.negocio = _negocio("Negocio Auditoria Admin Test")
+        self.user = _superusuario(self.negocio, username="admin_auditoria")
+        self.proveedor = _proveedor(self.negocio)
+        self.insumo = _producto(
+            self.negocio, "Producto Auditoria Admin", tipo=TipoProducto.INSUMO
+        )
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _compra_post_data(self, observaciones="", cantidad="3", precio="500", fecha="2024-04-01"):
+        """POST data para crear una Compra con un ítem via Admin.
+
+        Prefijos confirmados inspeccionando el HTML del GET:
+          items → ItemCompraInline
+          movimientos_stock → MovimientoStockCompraInline (read-only)
+        """
+        return {
+            "proveedor": str(self.proveedor.pk),
+            "fecha_0": fecha,
+            "fecha_1": "09:00:00",
+            "observaciones": observaciones,
+            "items-TOTAL_FORMS": "1",
+            "items-INITIAL_FORMS": "0",
+            "items-MIN_NUM_FORMS": "0",
+            "items-MAX_NUM_FORMS": "1000",
+            "items-0-producto": str(self.insumo.pk),
+            "items-0-cantidad": cantidad,
+            "items-0-precio_unitario": precio,
+            "items-0-id": "",
+            "items-0-DELETE": "",
+            "movimientos_stock-TOTAL_FORMS": "0",
+            "movimientos_stock-INITIAL_FORMS": "0",
+            "movimientos_stock-MIN_NUM_FORMS": "0",
+            "movimientos_stock-MAX_NUM_FORMS": "0",
+        }
+
+    def test_post_compra_con_auditoria_fallida_no_da_500(self):
+        """Si la auditoría falla durante el POST Admin, la respuesta no debe ser 500."""
+        with patch("core.signals._log") as mock_log:
+            mock_log.side_effect = Exception("Auditoria caída en test Admin")
+
+            response = self.client.post(
+                "/admin/compras/compra/add/",
+                data=self._compra_post_data(fecha="2024-04-01"),
+            )
+
+        self.assertNotEqual(
+            response.status_code, 500,
+            "Un fallo en la auditoría no debe devolver 500 al usuario.",
+        )
+
+    def test_post_compra_con_auditoria_fallida_persiste_compra(self):
+        """La Compra debe guardarse aunque la auditoría falle."""
+        with patch("core.signals._log") as mock_log:
+            mock_log.side_effect = Exception("Auditoria caída en test Admin")
+
+            self.client.post(
+                "/admin/compras/compra/add/",
+                data=self._compra_post_data(observaciones="Con fallo de auditoria", fecha="2024-04-05"),
+            )
+
+        # La Compra debe haberse guardado a pesar del fallo de auditoría
+        self.assertTrue(
+            Compra.objects.all_tenants().filter(
+                negocio=self.negocio,
+                observaciones="Con fallo de auditoria",
+            ).exists(),
+            "La Compra debe guardarse aunque la auditoría falle durante el POST Admin.",
+        )
+
+    def test_fallo_auditoria_registra_en_logger(self):
+        """Cuando la auditoría falla, logger.exception debe llamarse (no silencio total)."""
+        with patch("core.signals.ActividadNegocio.objects") as mock_manager:
+            mock_manager.create.side_effect = Exception("Fallo controlado en logger Admin")
+
+            with self.assertLogs("core.signals", level="ERROR") as log_ctx:
+                self.client.post(
+                    "/admin/compras/compra/add/",
+                    data=self._compra_post_data(cantidad="2", precio="300", fecha="2024-04-06"),
+                )
+
+        error_msgs = [m for m in log_ctx.output if "ERROR" in m or "CRITICAL" in m]
+        self.assertTrue(
+            len(error_msgs) > 0,
+            f"El fallo de auditoría debe quedar registrado en logger.exception. "
+            f"Mensajes encontrados: {log_ctx.output}",
+        )
+
+    def test_respuesta_no_expone_traceback_al_usuario(self):
+        """El cuerpo de la respuesta no debe contener tracebacks ni errores internos."""
+        with patch("core.signals._log") as mock_log:
+            mock_log.side_effect = Exception("Excepción interna que no debe verse")
+
+            response = self.client.post(
+                "/admin/compras/compra/add/",
+                data=self._compra_post_data(cantidad="1", precio="100", fecha="2024-04-07"),
+            )
+
+        # Si es una redirección (302), no hay contenido que exponga nada
+        if response.status_code == 302:
+            return  # OK
+
+        # Si devuelve contenido (200 con errores de formulario), no debe
+        # incluir ningún traceback Python visible
+        content = response.content.decode("utf-8", errors="replace")
+        self.assertNotIn(
+            "Traceback (most recent call last)",
+            content,
+            "El response no debe exponer un traceback Python al usuario.",
+        )
+        self.assertNotIn(
+            "Excepción interna que no debe verse",
+            content,
+            "El response no debe exponer el mensaje interno de la excepción.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# D. Aislamiento de negocio: middleware inyecta el negocio correcto
+# ---------------------------------------------------------------------------
+
+class AdminMiddlewareNegocioTest(TestCase):
+    """Verifica que CurrentBusinessMiddleware establece el negocio del usuario
+    en el thread-local durante el request Admin."""
+
+    def setUp(self):
+        self.negocio_a = _negocio("Negocio A Middleware")
+        self.negocio_b = _negocio("Negocio B Middleware")
+        self.user_a = _superusuario(self.negocio_a, username="user_middleware_a")
+        self.proveedor_a = _proveedor(self.negocio_a, "Proveedor A")
+        self.proveedor_b = _proveedor(self.negocio_b, "Proveedor B")
+        self.client = Client()
+        self.client.force_login(self.user_a)
+
+    def test_middleware_establece_negocio_en_request(self):
+        """El middleware debe registrar el negocio en el thread-local.
+        Probado indirectamente: un objeto creado desde Admin debe tener
+        el negocio del usuario autenticado."""
+        from core.managers import get_current_business
+
+        negocio_capturado = {}
+
+        original_set = __import__(
+            "core.managers", fromlist=["set_current_business"]
+        ).set_current_business
+
+        def patched_set(negocio):
+            negocio_capturado["negocio"] = negocio
+            original_set(negocio)
+
+        with patch("core.middleware.set_current_business", side_effect=patched_set):
+            self.client.get("/admin/compras/compra/add/")
+
+        # El middleware debe haber llamado set_current_business con el negocio_a
+        self.assertIn("negocio", negocio_capturado)
+        self.assertEqual(
+            negocio_capturado["negocio"],
+            self.negocio_a,
+            "El middleware debe establecer el negocio del usuario autenticado.",
+        )
+
+    def test_queryset_compra_filtrado_por_negocio(self):
+        """El admin de Compras lista objetos de negocio_a pero NO los de negocio_b."""
+        # Nombres inequívocos para evitar coincidencias accidentales entre A y B
+        proveedor_solo_a = _proveedor(self.negocio_a, "ProveedorEXCLUSIVO_NEGOCIO_A_xyz")
+        proveedor_solo_b = _proveedor(self.negocio_b, "ProveedorEXCLUSIVO_NEGOCIO_B_xyz")
+
+        Compra.objects.all_tenants().create(
+            negocio=self.negocio_a,
+            proveedor=proveedor_solo_a,
+            fecha=timezone.now(),
+        )
+        Compra.objects.all_tenants().create(
+            negocio=self.negocio_b,
+            proveedor=proveedor_solo_b,
+            fecha=timezone.now(),
+        )
+
+        # user_a (pertenece a negocio_a) accede al changelist
+        response = self.client.get("/admin/compras/compra/")
+        self.assertEqual(response.status_code, 200)
+
+        # Verificación via queryset del contexto Admin (más confiable que HTML):
+        # el changelist_view expone el queryset en response.context["cl"].queryset
+        cl = response.context.get("cl")
+        if cl is not None:
+            qs = cl.queryset
+            pks_en_lista = set(qs.values_list("pk", flat=True))
+            compra_a_qs = Compra.objects.all_tenants().filter(
+                negocio=self.negocio_a, proveedor=proveedor_solo_a
+            )
+            compra_b_qs = Compra.objects.all_tenants().filter(
+                negocio=self.negocio_b, proveedor=proveedor_solo_b
+            )
+            if compra_a_qs.exists():
+                self.assertIn(
+                    compra_a_qs.first().pk,
+                    pks_en_lista,
+                    "La Compra de negocio_a debe aparecer en el changelist del usuario A.",
+                )
+            if compra_b_qs.exists():
+                self.assertNotIn(
+                    compra_b_qs.first().pk,
+                    pks_en_lista,
+                    "La Compra de negocio_b NO debe aparecer en el changelist del usuario A.",
+                )
+        else:
+            # Fallback: verificación por contenido HTML con tokens inequívocos
+            content = response.content.decode("utf-8", errors="replace")
+            self.assertIn(
+                "ProveedorEXCLUSIVO_NEGOCIO_A_xyz",
+                content,
+                "El proveedor de negocio_a debe aparecer en el changelist.",
+            )
+            self.assertNotIn(
+                "ProveedorEXCLUSIVO_NEGOCIO_B_xyz",
+                content,
+                "El proveedor de negocio_b NO debe aparecer en el changelist del usuario A.",
+            )
+
+
+# ---------------------------------------------------------------------------
+# E. Edición de Compra existente desde Django Admin
+# ---------------------------------------------------------------------------
+
+class AdminCompraEdicionTest(TestCase):
+    """POST real a /admin/compras/compra/<pk>/change/ — edición de Compra con ítem.
+
+    Verifica:
+    - HTTP 302 tras edición exitosa (sin HTTP 500)
+    - Total recalculado correctamente
+    - Sin duplicación de MovimientoStock (señal solo actúa en created=True)
+    - Sin duplicación de MovimientoCaja (save_related usa update_fields)
+    - Monto de MovimientoCaja actualizado al nuevo total
+    """
+
+    def setUp(self):
+        self.negocio = _negocio("Negocio Edicion Compra")
+        self.user = _superusuario(self.negocio, username="admin_compra_edit")
+        self.proveedor = _proveedor(self.negocio, nombre="Proveedor Edicion Test")
+        self.insumo = _producto(
+            self.negocio,
+            "Harina Edicion",
+            tipo=TipoProducto.INSUMO,
+            costo=Decimal("800"),
+        )
+        # Crear Compra e ItemCompra directamente.
+        # itemcompra_post_save crea automáticamente 1 MovimientoStock (INGRESO).
+        self.compra = Compra.objects.all_tenants().create(
+            negocio=self.negocio,
+            proveedor=self.proveedor,
+            fecha=timezone.now(),
+        )
+        self.item = ItemCompra.objects.all_tenants().create(
+            negocio=self.negocio,
+            compra=self.compra,
+            producto=self.insumo,
+            cantidad=Decimal("5"),
+            precio_unitario=Decimal("1000"),
+        )
+        self.compra.recalcular_total()
+        self.mov_stock = MovimientoStock.objects.all_tenants().filter(
+            negocio=self.negocio,
+            compra_origen=self.compra,
+        ).first()
+        # Simular el MovimientoCaja que CompraAdmin.save_related habría creado
+        self.mov_caja = MovimientoCaja.objects.all_tenants().create(
+            negocio=self.negocio,
+            tipo=MovimientoCaja.Tipo.EGRESO,
+            monto=self.compra.total,
+            concepto=f"Compra a {self.proveedor}",
+            compra_origen=self.compra,
+            fecha=self.compra.fecha,
+        )
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _post_edicion_compra(self, cantidad="10", precio_unitario="1200"):
+        """POST al change view de la Compra con valores actualizados."""
+        movs = list(
+            MovimientoStock.objects.all_tenants()
+            .filter(negocio=self.negocio, compra_origen=self.compra)
+            .values_list("pk", flat=True)
+        )
+        data = {
+            "proveedor": str(self.proveedor.pk),
+            "fecha_0": "2024-03-15",
+            "fecha_1": "10:00:00",
+            "observaciones": "",
+            # Management form ItemCompraInline (prefix: "items")
+            "items-TOTAL_FORMS": "1",
+            "items-INITIAL_FORMS": "1",
+            "items-MIN_NUM_FORMS": "0",
+            "items-MAX_NUM_FORMS": "1000",
+            # id obligatorio para que Django reconozca el ítem como existente (edición, no alta)
+            "items-0-id": str(self.item.pk),
+            "items-0-producto": str(self.insumo.pk),
+            "items-0-cantidad": cantidad,
+            "items-0-precio_unitario": precio_unitario,
+            "items-0-DELETE": "",
+            # Management form MovimientoStockCompraInline (prefix: "movimientos_stock", read-only)
+            "movimientos_stock-TOTAL_FORMS": str(len(movs)),
+            "movimientos_stock-INITIAL_FORMS": str(len(movs)),
+            "movimientos_stock-MIN_NUM_FORMS": "0",
+            "movimientos_stock-MAX_NUM_FORMS": "0",
+        }
+        for i, pk in enumerate(movs):
+            data[f"movimientos_stock-{i}-id"] = str(pk)
+        return self.client.post(
+            f"/admin/compras/compra/{self.compra.pk}/change/",
+            data=data,
+        )
+
+    def test_get_change_view_compra_devuelve_200(self):
+        """GET al change view de la Compra existente debe responder 200."""
+        response = self.client.get(f"/admin/compras/compra/{self.compra.pk}/change/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_post_edicion_compra_devuelve_302(self):
+        """Editar una Compra via Admin change view debe retornar 302 sin HTTP 500."""
+        response = self._post_edicion_compra()
+        self.assertEqual(
+            response.status_code, 302,
+            f"Se esperaba 302 tras edición exitosa, se obtuvo {response.status_code}. "
+            f"Un 200 indica formulario con errores. "
+            f"Content snippet: {response.content[:800]!r}",
+        )
+
+    def test_edicion_compra_recalcula_total(self):
+        """Tras la edición, el total debe reflejar la nueva cantidad × precio."""
+        self._post_edicion_compra(cantidad="10", precio_unitario="1200")
+        self.compra.refresh_from_db()
+        self.assertEqual(
+            self.compra.total,
+            Decimal("12000"),
+            f"Total esperado 12000 (10×1200), obtenido {self.compra.total}",
+        )
+
+    def test_edicion_compra_no_duplica_movimiento_stock(self):
+        """Editar un ItemCompra existente no crea un nuevo MovimientoStock.
+
+        itemcompra_post_save solo actúa cuando created=True; la edición no
+        dispara esa señal.
+        """
+        count_antes = MovimientoStock.objects.all_tenants().filter(
+            negocio=self.negocio, compra_origen=self.compra
+        ).count()
+        self._post_edicion_compra(cantidad="10", precio_unitario="1200")
+        count_despues = MovimientoStock.objects.all_tenants().filter(
+            negocio=self.negocio, compra_origen=self.compra
+        ).count()
+        self.assertEqual(
+            count_antes,
+            count_despues,
+            f"No deben crearse nuevos MovimientoStock al editar: "
+            f"antes={count_antes}, después={count_despues}",
+        )
+
+    def test_edicion_compra_no_duplica_movimiento_caja(self):
+        """CompraAdmin.save_related actualiza el MovimientoCaja existente, no crea uno nuevo."""
+        count_antes = MovimientoCaja.objects.all_tenants().filter(
+            negocio=self.negocio, compra_origen=self.compra
+        ).count()
+        self._post_edicion_compra(cantidad="10", precio_unitario="1200")
+        count_despues = MovimientoCaja.objects.all_tenants().filter(
+            negocio=self.negocio, compra_origen=self.compra
+        ).count()
+        self.assertEqual(
+            count_antes,
+            count_despues,
+            f"No debe duplicarse el MovimientoCaja: "
+            f"antes={count_antes}, después={count_despues}",
+        )
+
+    def test_edicion_compra_actualiza_monto_caja(self):
+        """El MovimientoCaja debe reflejar el nuevo total tras la edición."""
+        self._post_edicion_compra(cantidad="10", precio_unitario="1200")
+        self.mov_caja.refresh_from_db()
+        self.assertEqual(
+            self.mov_caja.monto,
+            Decimal("12000"),
+            f"Monto de caja esperado 12000, obtenido {self.mov_caja.monto}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# F. Edición de Receta existente desde Django Admin
+# ---------------------------------------------------------------------------
+
+class AdminRecetaEdicionTest(TestCase):
+    """POST real a /admin/produccion/receta/<pk>/change/ — edición de Receta con ingrediente.
+
+    Verifica:
+    - HTTP 302 tras edición exitosa (sin HTTP 500)
+    - costo_total refleja la nueva cantidad del ingrediente
+    - No se crean MovimientoStock (solo ProduccionRealizada los genera)
+    - El negocio de la Receta se preserva tras la edición
+    """
+
+    def setUp(self):
+        self.negocio = _negocio("Negocio Edicion Receta")
+        self.user = _superusuario(self.negocio, username="admin_receta_edit")
+        self.producto_venta = _producto(
+            self.negocio, "Pan Edicion Admin", tipo=TipoProducto.VENTA,
+            precio_venta=Decimal("500"),
+        )
+        self.insumo = _producto(
+            self.negocio, "Harina Receta Edicion", tipo=TipoProducto.INSUMO,
+            costo=Decimal("800"),
+        )
+        self.receta = Receta.objects.all_tenants().create(
+            negocio=self.negocio,
+            nombre="Receta Edicion Test",
+            producto_resultante=self.producto_venta,
+            rendimiento=Decimal("10"),
+            porcentaje_ganancia=Decimal("30"),
+        )
+        # cantidad=2 → costo_ingrediente = 2 × 800 = 1600 → costo_total inicial = 1600
+        self.ingrediente = Ingrediente.objects.all_tenants().create(
+            negocio=self.negocio,
+            receta=self.receta,
+            producto=self.insumo,
+            cantidad=Decimal("2"),
+        )
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _post_edicion_receta(self, cantidad_ing="5", rendimiento="10"):
+        """POST al change view de la Receta con cantidad de ingrediente actualizada."""
+        return self.client.post(
+            f"/admin/produccion/receta/{self.receta.pk}/change/",
+            data={
+                "nombre": self.receta.nombre,
+                "producto_resultante": str(self.producto_venta.pk),
+                "rendimiento": rendimiento,
+                "porcentaje_ganancia": "30",
+                "instrucciones": "",
+                # Management form IngredienteInline (prefix: "ingredientes")
+                "ingredientes-TOTAL_FORMS": "1",
+                "ingredientes-INITIAL_FORMS": "1",
+                "ingredientes-MIN_NUM_FORMS": "0",
+                "ingredientes-MAX_NUM_FORMS": "1000",
+                # id obligatorio para que Django reconozca el ingrediente como existente
+                "ingredientes-0-id": str(self.ingrediente.pk),
+                "ingredientes-0-producto": str(self.insumo.pk),
+                "ingredientes-0-cantidad": cantidad_ing,
+                "ingredientes-0-DELETE": "",
+            },
+        )
+
+    def test_get_change_view_receta_devuelve_200(self):
+        """GET al change view de la Receta existente debe responder 200."""
+        response = self.client.get(f"/admin/produccion/receta/{self.receta.pk}/change/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_post_edicion_receta_devuelve_302(self):
+        """Editar una Receta via Admin change view debe retornar 302 sin HTTP 500."""
+        response = self._post_edicion_receta()
+        self.assertEqual(
+            response.status_code, 302,
+            f"Se esperaba 302 tras edición exitosa, se obtuvo {response.status_code}. "
+            f"Un 200 indica formulario con errores. "
+            f"Content snippet: {response.content[:800]!r}",
+        )
+
+    def test_edicion_receta_actualiza_costo_total(self):
+        """Tras actualizar la cantidad del ingrediente, costo_total debe recalcularse.
+
+        costo_total es una property computada; se verifica leyendo el ingrediente
+        actualizado desde BD y calculando el valor esperado.
+        """
+        self._post_edicion_receta(cantidad_ing="5")
+        self.ingrediente.refresh_from_db()
+        # 5 × 800 = 4000
+        self.assertEqual(
+            self.receta.costo_total,
+            Decimal("4000"),
+            f"costo_total esperado 4000 (5×800), obtenido {self.receta.costo_total}",
+        )
+
+    def test_edicion_receta_no_genera_movimiento_stock(self):
+        """Editar Receta o Ingrediente no debe generar MovimientoStock.
+
+        Solo ProduccionRealizada.post_save crea movimientos de stock; las señales
+        de Receta e Ingrediente no están conectadas a stock.
+        """
+        count_antes = MovimientoStock.objects.all_tenants().filter(
+            negocio=self.negocio
+        ).count()
+        self._post_edicion_receta(cantidad_ing="5")
+        count_despues = MovimientoStock.objects.all_tenants().filter(
+            negocio=self.negocio
+        ).count()
+        self.assertEqual(
+            count_antes,
+            count_despues,
+            f"Editar una Receta no debe crear MovimientoStock: "
+            f"antes={count_antes}, después={count_despues}",
+        )
+
+    def test_edicion_receta_conserva_negocio(self):
+        """El negocio asignado a la Receta no debe cambiar tras la edición."""
+        self._post_edicion_receta()
+        self.receta.refresh_from_db()
+        self.assertEqual(
+            self.receta.negocio_id,
+            self.negocio.pk,
+            "El negocio de la Receta no debe modificarse tras la edición.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# G. Aislamiento de negocio en change views — acceso cruzado entre negocios
+# ---------------------------------------------------------------------------
+
+class AdminAislamientoEdicionTest(TestCase):
+    """Un usuario de negocio_a no puede acceder al change view de objetos de negocio_b.
+
+    TenantOwnedAdmin.get_queryset() filtra por el negocio del usuario autenticado.
+    Cuando el objeto no pertenece al negocio del usuario, Django Admin redirige al
+    changelist en lugar de mostrar el formulario (HTTP 302, no HTTP 200).
+    """
+
+    def setUp(self):
+        self.negocio_a = _negocio("Negocio A Aislamiento Edit")
+        self.negocio_b = _negocio("Negocio B Aislamiento Edit")
+        self.user_a = _superusuario(self.negocio_a, username="admin_aislamiento_edit_a")
+
+        proveedor_b = Proveedor.objects.all_tenants().create(
+            negocio=self.negocio_b, nombre="Proveedor B Aislamiento Edit"
+        )
+        self.compra_b = Compra.objects.all_tenants().create(
+            negocio=self.negocio_b,
+            proveedor=proveedor_b,
+            fecha=timezone.now(),
+        )
+        producto_b = Producto.objects.all_tenants().create(
+            negocio=self.negocio_b,
+            nombre="Producto B Aislamiento Edit",
+            tipo=TipoProducto.VENTA,
+            precio_venta=Decimal("100"),
+        )
+        self.receta_b = Receta.objects.all_tenants().create(
+            negocio=self.negocio_b,
+            nombre="Receta B Aislamiento Edit",
+            producto_resultante=producto_b,
+            rendimiento=Decimal("1"),
+        )
+        self.client = Client()
+        self.client.force_login(self.user_a)
+
+    def test_change_compra_negocio_ajeno_no_devuelve_200(self):
+        """El change view de una Compra de negocio_b no debe renderizarse para usuario de negocio_a.
+
+        TenantOwnedAdmin.get_queryset() excluye objetos de otros negocios;
+        Django Admin redirige al changelist (302) cuando el objeto no está en el queryset.
+        """
+        response = self.client.get(
+            f"/admin/compras/compra/{self.compra_b.pk}/change/"
+        )
+        self.assertNotEqual(
+            response.status_code, 200,
+            "El change view de una Compra de otro negocio NO debe devolver 200.",
+        )
+
+    def test_change_receta_negocio_ajeno_no_devuelve_200(self):
+        """El change view de una Receta de negocio_b no debe renderizarse para usuario de negocio_a."""
+        response = self.client.get(
+            f"/admin/produccion/receta/{self.receta_b.pk}/change/"
+        )
+        self.assertNotEqual(
+            response.status_code, 200,
+            "El change view de una Receta de otro negocio NO debe devolver 200.",
+        )

@@ -5,16 +5,15 @@ from caja.models import MovimientoCaja
 from core.admin import TenantOwnedAdmin
 from stock.models import MovimientoStock
 
-from .models import ItemVenta, Venta
+from .models import ItemVenta, PresentacionVenta, Venta
 
 
 class ItemVentaInline(TabularInline):
     model = ItemVenta
     extra = 1
-    fields = ("producto", "cantidad", "precio_unitario")
-    autocomplete_fields = ("producto",)
+    fields = ("producto", "presentacion", "cantidad", "precio_unitario")
+    autocomplete_fields = ("producto", "presentacion")
     tab = True
-
 
 
 class MovimientoStockVentaInline(TabularInline):
@@ -75,3 +74,10 @@ class VentaAdmin(TenantOwnedAdmin):
                     venta_origen=venta,
                     fecha=venta.fecha,
                 )
+
+
+@admin.register(PresentacionVenta)
+class PresentacionVentaAdmin(TenantOwnedAdmin):
+    list_display = ("producto", "nombre", "factor", "precio", "activo")
+    list_filter = ("activo",)
+    search_fields = ("nombre", "producto__nombre")

@@ -6,6 +6,13 @@ from stock.models import MovimientoStock
 from .models import ItemVenta
 
 
+def _cantidad_stock(instance: ItemVenta):
+    """Unidades físicas a descontar: cantidad × factor de la presentación (o 1 si no hay)."""
+    if instance.presentacion_id:
+        return instance.cantidad * instance.presentacion.factor
+    return instance.cantidad
+
+
 @receiver(post_save, sender=ItemVenta)
 def itemventa_post_save(sender, instance: ItemVenta, created, **kwargs):
     if not created:
@@ -14,7 +21,7 @@ def itemventa_post_save(sender, instance: ItemVenta, created, **kwargs):
         negocio=instance.negocio,
         producto=instance.producto,
         tipo=MovimientoStock.Tipo.EGRESO,
-        cantidad=instance.cantidad,
+        cantidad=_cantidad_stock(instance),
         motivo=f"Venta #{instance.venta_id}",
         venta_origen=instance.venta,
     )
@@ -26,7 +33,7 @@ def itemventa_post_delete(sender, instance: ItemVenta, **kwargs):
         negocio=instance.negocio,
         producto=instance.producto,
         tipo=MovimientoStock.Tipo.INGRESO,
-        cantidad=instance.cantidad,
+        cantidad=_cantidad_stock(instance),
         motivo=f"Reversa por borrado de ítem de venta #{instance.venta_id}",
         venta_origen=instance.venta,
     )

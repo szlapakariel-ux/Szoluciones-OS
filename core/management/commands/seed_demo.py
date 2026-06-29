@@ -57,6 +57,9 @@ class Command(BaseCommand):
             ]:
                 model.objects.all_tenants().delete()
             Usuario.objects.exclude(is_superuser=True).delete()
+            # Los superusuarios tienen negocio=PROTECT; hay que desvincularlo antes de
+            # borrar el Negocio para evitar ProtectedError.
+            Usuario.objects.filter(is_superuser=True).update(negocio=None)
             Negocio.objects.all().delete()
 
         # Superusuario

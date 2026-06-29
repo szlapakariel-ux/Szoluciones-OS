@@ -1,3 +1,4 @@
+import logging
 from functools import wraps
 
 from django.contrib.auth.signals import user_logged_in, user_logged_out
@@ -6,23 +7,39 @@ from django.dispatch import receiver
 
 from .models import ActividadNegocio
 
+logger = logging.getLogger(__name__)
+
 
 def _log(negocio, modulo, accion):
+    """Registra una actividad de auditoría. Los errores se registran en el log
+    técnico pero nunca interrumpen la operación principal."""
     if not negocio:
         return
     try:
         ActividadNegocio.objects.create(negocio=negocio, modulo=modulo, accion=accion[:200])
     except Exception:
-        pass
+        logger.exception(
+            "Error al registrar actividad de auditoría [negocio=%s modulo=%s accion=%s]",
+            getattr(negocio, "pk", negocio),
+            modulo,
+            accion[:200],
+        )
 
 
 def _safe(fn):
-    """Activity-log signals must never break the save of the model they observe."""
+    """Activity-log signals must never break the save of the model they observe.
+
+    Los errores se registran en el log técnico para que puedan diagnosticarse,
+    pero no se propagan al caller ni al usuario final.
+    """
     @wraps(fn)
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
         except Exception:
+            logger.exception(
+                "Error inesperado en señal de auditoría [signal=%s]", fn.__name__
+            )
             return None
     return wrapper
 

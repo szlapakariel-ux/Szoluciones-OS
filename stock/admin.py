@@ -4,7 +4,10 @@ from django.contrib import admin, messages
 from django.http import HttpResponseRedirect
 from django.urls import path, reverse
 
+from unfold.admin import TabularInline
+
 from core.admin import TenantOwnedAdmin
+from ventas.models import PresentacionVenta
 
 from .models import MovimientoStock, Producto
 
@@ -12,6 +15,12 @@ from .models import MovimientoStock, Producto
 def _fmt(amount):
     s = f"{amount:,.2f}"
     return "$" + s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+class PresentacionVentaInline(TabularInline):
+    model = PresentacionVenta
+    extra = 1
+    fields = ("nombre", "factor", "precio", "activo")
 
 
 @admin.register(Producto)
@@ -34,6 +43,7 @@ class ProductoAdmin(TenantOwnedAdmin):
         ("Precios", {"fields": ("costo", "precio_venta")}),
     )
     readonly_fields = ("stock_actual",)
+    inlines = [PresentacionVentaInline]
 
     def get_urls(self):
         urls = super().get_urls()

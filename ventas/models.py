@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
 
@@ -62,6 +64,14 @@ class ItemVenta(TenantOwnedModel):
         related_name="items_venta",
         verbose_name="Producto",
     )
+    presentacion = models.ForeignKey(
+        "PresentacionVenta",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="items_venta",
+        verbose_name="Presentación de venta",
+    )
     cantidad = models.DecimalField("Cantidad", max_digits=12, decimal_places=2)
     precio_unitario = models.DecimalField(
         "Precio unitario", max_digits=12, decimal_places=2
@@ -78,7 +88,76 @@ class ItemVenta(TenantOwnedModel):
     def subtotal(self) -> Decimal:
         return self.cantidad * self.precio_unitario
 
+    def clean(self):
+        if self.presentacion_id:
+            pv = self.presentacion
+            if self.producto_id and pv.producto_id != self.producto_id:
+                raise ValidationError(
+                    {"presentacion": "La presentación no pertenece al producto seleccionado."}
+                )
+            if self.negocio_id and pv.negocio_id != self.negocio_id:
+                raise ValidationError(
+                    {"presentacion": "La presentación pertenece a otro negocio."}
+                )
+            if not pv.activo and not self.pk:
+                raise ValidationError(
+                    {"presentacion": "No se puede usar una presentación inactiva en una nueva venta."}
+                )
+
     def save(self, *args, **kwargs):
         if not self.pk and (self.precio_unitario is None or self.precio_unitario == 0):
-            self.precio_unitario = self.producto.precio_venta
+            if self.presentacion_id:
+                self.precio_unitario = self.presentacion.precio
+            else:
+                self.precio_unitario = self.producto.precio_venta
         super().save(*args, **kwargs)
+
+
+class PresentacionVenta(TenantOwnedModel):
+    producto = models.ForeignKey(
+        Producto,
+        on_delete=models.CASCADE,
+        related_name="presentaciones",
+        verbose_name="Producto",
+    )
+    nombre = models.CharField("Nombre", max_length=80)
+    factor = models.DecimalField(
+        "Factor de stock",
+        max_digits=12,
+        decimal_places=2,
+        help_text="Unidades de stock base que descuenta esta presentación.",
+        validators=[MinValueValidator(Decimal("0.01"))],
+    )
+    precio = models.DecimalField(
+        "Precio de venta",
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0"))],
+    )
+    activo = models.BooleanField("Activo", default=True)
+
+    class Meta:
+        verbose_name = "Presentación de venta"
+        verbose_name_plural = "Presentaciones de venta"
+        ordering = ["producto", "factor"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["negocio", "producto", "nombre"],
+                name="presentacion_nombre_unico_por_producto_negocio",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.nombre} ({self.producto})"
+
+    def save(self, *args, **kwargs):
+        if not self.negocio_id and self.producto_id:
+            self.negocio_id = self.producto.negocio_id
+        super().save(*args, **kwargs)
+
+    def clean(self):
+        if self.producto_id and self.negocio_id:
+            if self.producto.negocio_id != self.negocio_id:
+                raise ValidationError(
+                    {"producto": "El producto debe pertenecer al mismo negocio que la presentación."}
+                )
