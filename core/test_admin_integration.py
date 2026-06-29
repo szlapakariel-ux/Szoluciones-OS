@@ -548,3 +548,358 @@ class AdminMiddlewareNegocioTest(TestCase):
                 content,
                 "El proveedor de negocio_b NO debe aparecer en el changelist del usuario A.",
             )
+
+
+# ---------------------------------------------------------------------------
+# E. Edición de Compra existente desde Django Admin
+# ---------------------------------------------------------------------------
+
+class AdminCompraEdicionTest(TestCase):
+    """POST real a /admin/compras/compra/<pk>/change/ — edición de Compra con ítem.
+
+    Verifica:
+    - HTTP 302 tras edición exitosa (sin HTTP 500)
+    - Total recalculado correctamente
+    - Sin duplicación de MovimientoStock (señal solo actúa en created=True)
+    - Sin duplicación de MovimientoCaja (save_related usa update_fields)
+    - Monto de MovimientoCaja actualizado al nuevo total
+    """
+
+    def setUp(self):
+        self.negocio = _negocio("Negocio Edicion Compra")
+        self.user = _superusuario(self.negocio, username="admin_compra_edit")
+        self.proveedor = _proveedor(self.negocio, nombre="Proveedor Edicion Test")
+        self.insumo = _producto(
+            self.negocio,
+            "Harina Edicion",
+            tipo=TipoProducto.INSUMO,
+            costo=Decimal("800"),
+        )
+        # Crear Compra e ItemCompra directamente.
+        # itemcompra_post_save crea automáticamente 1 MovimientoStock (INGRESO).
+        self.compra = Compra.objects.all_tenants().create(
+            negocio=self.negocio,
+            proveedor=self.proveedor,
+            fecha=timezone.now(),
+        )
+        self.item = ItemCompra.objects.all_tenants().create(
+            negocio=self.negocio,
+            compra=self.compra,
+            producto=self.insumo,
+            cantidad=Decimal("5"),
+            precio_unitario=Decimal("1000"),
+        )
+        self.compra.recalcular_total()
+        self.mov_stock = MovimientoStock.objects.all_tenants().filter(
+            negocio=self.negocio,
+            compra_origen=self.compra,
+        ).first()
+        # Simular el MovimientoCaja que CompraAdmin.save_related habría creado
+        self.mov_caja = MovimientoCaja.objects.all_tenants().create(
+            negocio=self.negocio,
+            tipo=MovimientoCaja.Tipo.EGRESO,
+            monto=self.compra.total,
+            concepto=f"Compra a {self.proveedor}",
+            compra_origen=self.compra,
+            fecha=self.compra.fecha,
+        )
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _post_edicion_compra(self, cantidad="10", precio_unitario="1200"):
+        """POST al change view de la Compra con valores actualizados."""
+        movs = list(
+            MovimientoStock.objects.all_tenants()
+            .filter(negocio=self.negocio, compra_origen=self.compra)
+            .values_list("pk", flat=True)
+        )
+        data = {
+            "proveedor": str(self.proveedor.pk),
+            "fecha_0": "2024-03-15",
+            "fecha_1": "10:00:00",
+            "observaciones": "",
+            # Management form ItemCompraInline (prefix: "items")
+            "items-TOTAL_FORMS": "1",
+            "items-INITIAL_FORMS": "1",
+            "items-MIN_NUM_FORMS": "0",
+            "items-MAX_NUM_FORMS": "1000",
+            # id obligatorio para que Django reconozca el ítem como existente (edición, no alta)
+            "items-0-id": str(self.item.pk),
+            "items-0-producto": str(self.insumo.pk),
+            "items-0-cantidad": cantidad,
+            "items-0-precio_unitario": precio_unitario,
+            "items-0-DELETE": "",
+            # Management form MovimientoStockCompraInline (prefix: "movimientos_stock", read-only)
+            "movimientos_stock-TOTAL_FORMS": str(len(movs)),
+            "movimientos_stock-INITIAL_FORMS": str(len(movs)),
+            "movimientos_stock-MIN_NUM_FORMS": "0",
+            "movimientos_stock-MAX_NUM_FORMS": "0",
+        }
+        for i, pk in enumerate(movs):
+            data[f"movimientos_stock-{i}-id"] = str(pk)
+        return self.client.post(
+            f"/admin/compras/compra/{self.compra.pk}/change/",
+            data=data,
+        )
+
+    def test_get_change_view_compra_devuelve_200(self):
+        """GET al change view de la Compra existente debe responder 200."""
+        response = self.client.get(f"/admin/compras/compra/{self.compra.pk}/change/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_post_edicion_compra_devuelve_302(self):
+        """Editar una Compra via Admin change view debe retornar 302 sin HTTP 500."""
+        response = self._post_edicion_compra()
+        self.assertEqual(
+            response.status_code, 302,
+            f"Se esperaba 302 tras edición exitosa, se obtuvo {response.status_code}. "
+            f"Un 200 indica formulario con errores. "
+            f"Content snippet: {response.content[:800]!r}",
+        )
+
+    def test_edicion_compra_recalcula_total(self):
+        """Tras la edición, el total debe reflejar la nueva cantidad × precio."""
+        self._post_edicion_compra(cantidad="10", precio_unitario="1200")
+        self.compra.refresh_from_db()
+        self.assertEqual(
+            self.compra.total,
+            Decimal("12000"),
+            f"Total esperado 12000 (10×1200), obtenido {self.compra.total}",
+        )
+
+    def test_edicion_compra_no_duplica_movimiento_stock(self):
+        """Editar un ItemCompra existente no crea un nuevo MovimientoStock.
+
+        itemcompra_post_save solo actúa cuando created=True; la edición no
+        dispara esa señal.
+        """
+        count_antes = MovimientoStock.objects.all_tenants().filter(
+            negocio=self.negocio, compra_origen=self.compra
+        ).count()
+        self._post_edicion_compra(cantidad="10", precio_unitario="1200")
+        count_despues = MovimientoStock.objects.all_tenants().filter(
+            negocio=self.negocio, compra_origen=self.compra
+        ).count()
+        self.assertEqual(
+            count_antes,
+            count_despues,
+            f"No deben crearse nuevos MovimientoStock al editar: "
+            f"antes={count_antes}, después={count_despues}",
+        )
+
+    def test_edicion_compra_no_duplica_movimiento_caja(self):
+        """CompraAdmin.save_related actualiza el MovimientoCaja existente, no crea uno nuevo."""
+        count_antes = MovimientoCaja.objects.all_tenants().filter(
+            negocio=self.negocio, compra_origen=self.compra
+        ).count()
+        self._post_edicion_compra(cantidad="10", precio_unitario="1200")
+        count_despues = MovimientoCaja.objects.all_tenants().filter(
+            negocio=self.negocio, compra_origen=self.compra
+        ).count()
+        self.assertEqual(
+            count_antes,
+            count_despues,
+            f"No debe duplicarse el MovimientoCaja: "
+            f"antes={count_antes}, después={count_despues}",
+        )
+
+    def test_edicion_compra_actualiza_monto_caja(self):
+        """El MovimientoCaja debe reflejar el nuevo total tras la edición."""
+        self._post_edicion_compra(cantidad="10", precio_unitario="1200")
+        self.mov_caja.refresh_from_db()
+        self.assertEqual(
+            self.mov_caja.monto,
+            Decimal("12000"),
+            f"Monto de caja esperado 12000, obtenido {self.mov_caja.monto}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# F. Edición de Receta existente desde Django Admin
+# ---------------------------------------------------------------------------
+
+class AdminRecetaEdicionTest(TestCase):
+    """POST real a /admin/produccion/receta/<pk>/change/ — edición de Receta con ingrediente.
+
+    Verifica:
+    - HTTP 302 tras edición exitosa (sin HTTP 500)
+    - costo_total refleja la nueva cantidad del ingrediente
+    - No se crean MovimientoStock (solo ProduccionRealizada los genera)
+    - El negocio de la Receta se preserva tras la edición
+    """
+
+    def setUp(self):
+        self.negocio = _negocio("Negocio Edicion Receta")
+        self.user = _superusuario(self.negocio, username="admin_receta_edit")
+        self.producto_venta = _producto(
+            self.negocio, "Pan Edicion Admin", tipo=TipoProducto.VENTA,
+            precio_venta=Decimal("500"),
+        )
+        self.insumo = _producto(
+            self.negocio, "Harina Receta Edicion", tipo=TipoProducto.INSUMO,
+            costo=Decimal("800"),
+        )
+        self.receta = Receta.objects.all_tenants().create(
+            negocio=self.negocio,
+            nombre="Receta Edicion Test",
+            producto_resultante=self.producto_venta,
+            rendimiento=Decimal("10"),
+            porcentaje_ganancia=Decimal("30"),
+        )
+        # cantidad=2 → costo_ingrediente = 2 × 800 = 1600 → costo_total inicial = 1600
+        self.ingrediente = Ingrediente.objects.all_tenants().create(
+            negocio=self.negocio,
+            receta=self.receta,
+            producto=self.insumo,
+            cantidad=Decimal("2"),
+        )
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _post_edicion_receta(self, cantidad_ing="5", rendimiento="10"):
+        """POST al change view de la Receta con cantidad de ingrediente actualizada."""
+        return self.client.post(
+            f"/admin/produccion/receta/{self.receta.pk}/change/",
+            data={
+                "nombre": self.receta.nombre,
+                "producto_resultante": str(self.producto_venta.pk),
+                "rendimiento": rendimiento,
+                "porcentaje_ganancia": "30",
+                "instrucciones": "",
+                # Management form IngredienteInline (prefix: "ingredientes")
+                "ingredientes-TOTAL_FORMS": "1",
+                "ingredientes-INITIAL_FORMS": "1",
+                "ingredientes-MIN_NUM_FORMS": "0",
+                "ingredientes-MAX_NUM_FORMS": "1000",
+                # id obligatorio para que Django reconozca el ingrediente como existente
+                "ingredientes-0-id": str(self.ingrediente.pk),
+                "ingredientes-0-producto": str(self.insumo.pk),
+                "ingredientes-0-cantidad": cantidad_ing,
+                "ingredientes-0-DELETE": "",
+            },
+        )
+
+    def test_get_change_view_receta_devuelve_200(self):
+        """GET al change view de la Receta existente debe responder 200."""
+        response = self.client.get(f"/admin/produccion/receta/{self.receta.pk}/change/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_post_edicion_receta_devuelve_302(self):
+        """Editar una Receta via Admin change view debe retornar 302 sin HTTP 500."""
+        response = self._post_edicion_receta()
+        self.assertEqual(
+            response.status_code, 302,
+            f"Se esperaba 302 tras edición exitosa, se obtuvo {response.status_code}. "
+            f"Un 200 indica formulario con errores. "
+            f"Content snippet: {response.content[:800]!r}",
+        )
+
+    def test_edicion_receta_actualiza_costo_total(self):
+        """Tras actualizar la cantidad del ingrediente, costo_total debe recalcularse.
+
+        costo_total es una property computada; se verifica leyendo el ingrediente
+        actualizado desde BD y calculando el valor esperado.
+        """
+        self._post_edicion_receta(cantidad_ing="5")
+        self.ingrediente.refresh_from_db()
+        # 5 × 800 = 4000
+        self.assertEqual(
+            self.receta.costo_total,
+            Decimal("4000"),
+            f"costo_total esperado 4000 (5×800), obtenido {self.receta.costo_total}",
+        )
+
+    def test_edicion_receta_no_genera_movimiento_stock(self):
+        """Editar Receta o Ingrediente no debe generar MovimientoStock.
+
+        Solo ProduccionRealizada.post_save crea movimientos de stock; las señales
+        de Receta e Ingrediente no están conectadas a stock.
+        """
+        count_antes = MovimientoStock.objects.all_tenants().filter(
+            negocio=self.negocio
+        ).count()
+        self._post_edicion_receta(cantidad_ing="5")
+        count_despues = MovimientoStock.objects.all_tenants().filter(
+            negocio=self.negocio
+        ).count()
+        self.assertEqual(
+            count_antes,
+            count_despues,
+            f"Editar una Receta no debe crear MovimientoStock: "
+            f"antes={count_antes}, después={count_despues}",
+        )
+
+    def test_edicion_receta_conserva_negocio(self):
+        """El negocio asignado a la Receta no debe cambiar tras la edición."""
+        self._post_edicion_receta()
+        self.receta.refresh_from_db()
+        self.assertEqual(
+            self.receta.negocio_id,
+            self.negocio.pk,
+            "El negocio de la Receta no debe modificarse tras la edición.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# G. Aislamiento de negocio en change views — acceso cruzado entre negocios
+# ---------------------------------------------------------------------------
+
+class AdminAislamientoEdicionTest(TestCase):
+    """Un usuario de negocio_a no puede acceder al change view de objetos de negocio_b.
+
+    TenantOwnedAdmin.get_queryset() filtra por el negocio del usuario autenticado.
+    Cuando el objeto no pertenece al negocio del usuario, Django Admin redirige al
+    changelist en lugar de mostrar el formulario (HTTP 302, no HTTP 200).
+    """
+
+    def setUp(self):
+        self.negocio_a = _negocio("Negocio A Aislamiento Edit")
+        self.negocio_b = _negocio("Negocio B Aislamiento Edit")
+        self.user_a = _superusuario(self.negocio_a, username="admin_aislamiento_edit_a")
+
+        proveedor_b = Proveedor.objects.all_tenants().create(
+            negocio=self.negocio_b, nombre="Proveedor B Aislamiento Edit"
+        )
+        self.compra_b = Compra.objects.all_tenants().create(
+            negocio=self.negocio_b,
+            proveedor=proveedor_b,
+            fecha=timezone.now(),
+        )
+        producto_b = Producto.objects.all_tenants().create(
+            negocio=self.negocio_b,
+            nombre="Producto B Aislamiento Edit",
+            tipo=TipoProducto.VENTA,
+            precio_venta=Decimal("100"),
+        )
+        self.receta_b = Receta.objects.all_tenants().create(
+            negocio=self.negocio_b,
+            nombre="Receta B Aislamiento Edit",
+            producto_resultante=producto_b,
+            rendimiento=Decimal("1"),
+        )
+        self.client = Client()
+        self.client.force_login(self.user_a)
+
+    def test_change_compra_negocio_ajeno_no_devuelve_200(self):
+        """El change view de una Compra de negocio_b no debe renderizarse para usuario de negocio_a.
+
+        TenantOwnedAdmin.get_queryset() excluye objetos de otros negocios;
+        Django Admin redirige al changelist (302) cuando el objeto no está en el queryset.
+        """
+        response = self.client.get(
+            f"/admin/compras/compra/{self.compra_b.pk}/change/"
+        )
+        self.assertNotEqual(
+            response.status_code, 200,
+            "El change view de una Compra de otro negocio NO debe devolver 200.",
+        )
+
+    def test_change_receta_negocio_ajeno_no_devuelve_200(self):
+        """El change view de una Receta de negocio_b no debe renderizarse para usuario de negocio_a."""
+        response = self.client.get(
+            f"/admin/produccion/receta/{self.receta_b.pk}/change/"
+        )
+        self.assertNotEqual(
+            response.status_code, 200,
+            "El change view de una Receta de otro negocio NO debe devolver 200.",
+        )
