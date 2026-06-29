@@ -5,7 +5,7 @@ from caja.models import MovimientoCaja
 from core.admin import TenantOwnedAdmin
 from stock.models import MovimientoStock
 
-from .models import ItemVenta, Venta
+from .models import ItemVenta, PresentacionVenta, Venta
 
 
 class ItemVentaInline(TabularInline):
@@ -51,6 +51,13 @@ class VentaAdmin(TenantOwnedAdmin):
         return obj.items.count()
 
     items_count.short_description = "Ítems"
+
+
+@admin.register(PresentacionVenta)
+class PresentacionVentaAdmin(TenantOwnedAdmin):
+    list_display = ("producto", "nombre", "factor", "precio", "activo")
+    list_filter = ("activo",)
+    search_fields = ("nombre", "producto__nombre")
 
     def save_related(self, request, form, formsets, change):
         super().save_related(request, form, formsets, change)
