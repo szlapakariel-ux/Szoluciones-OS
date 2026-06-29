@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.test import Client, TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from core.models import Negocio
 from stock.models import MovimientoStock, Producto, TipoProducto
@@ -1200,3 +1201,188 @@ class POSConfirmarConPresentacionTest(POSHelperMixin, TestCase):
         ).first()
         self.assertIsNotNone(item)
         self.assertIsNone(item.presentacion_id)
+
+
+# ===========================================================================
+# ETAPA 4 — Buscador y orden por mayor movimiento en POS
+# ===========================================================================
+
+def _venta_hace(negocio, dias=0):
+    from datetime import timedelta
+    return Venta.objects.all_tenants().create(
+        negocio=negocio,
+        fecha=timezone.now() - timedelta(days=dias),
+        metodo_pago="EFECTIVO",
+    )
+
+
+class POSBuscadorMixin(POSHelperMixin):
+    """setUp común para tests de búsqueda y orden."""
+
+    def _setup_busqueda(self, nombre="POS Busqueda"):
+        self._setup_pos(nombre)
+        # Producto con código, nombrado para búsquedas parciales
+        self.producto_ricota = _producto(self.negocio, "Ricota")
+        self.producto_ricota.codigo = "RIC-001"
+        self.producto_ricota.save(update_fields=["codigo"])
+        self.producto_marmolado = _producto(self.negocio, "Mármolado")
+
+
+# ---------------------------------------------------------------------------
+# 1–8. Buscador
+# ---------------------------------------------------------------------------
+
+class POSBuscadorTest(POSBuscadorMixin, TestCase):
+    def setUp(self):
+        self._setup_busqueda("POS Bus Test")
+
+    def test_pos_carga_con_buscador_visible(self):
+        resp = self.client.get(reverse("app_venta"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Buscar producto")
+
+    def test_busqueda_parcial_por_nombre(self):
+        resp = self.client.get(reverse("app_venta"), {"q": "ric"})
+        self.assertEqual(resp.status_code, 200)
+        nombres = [p.nombre for p in resp.context["productos"]]
+        self.assertIn("Ricota", nombres)
+        self.assertNotIn("Mármolado", nombres)
+
+    def test_busqueda_por_codigo(self):
+        resp = self.client.get(reverse("app_venta"), {"q": "RIC-001"})
+        nombres = [p.nombre for p in resp.context["productos"]]
+        self.assertIn("Ricota", nombres)
+
+    def test_busqueda_sin_coincidencias_no_rompe_pos(self):
+        resp = self.client.get(reverse("app_venta"), {"q": "xyzinexistente"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(list(resp.context["productos"]), [])
+        self.assertContains(resp, "xyzinexistente")
+
+    def test_busqueda_no_distingue_mayusculas(self):
+        resp_lower = self.client.get(reverse("app_venta"), {"q": "ricota"})
+        resp_upper = self.client.get(reverse("app_venta"), {"q": "RICOTA"})
+        nombres_lower = [p.nombre for p in resp_lower.context["productos"]]
+        nombres_upper = [p.nombre for p in resp_upper.context["productos"]]
+        self.assertIn("Ricota", nombres_lower)
+        self.assertIn("Ricota", nombres_upper)
+
+    def test_termino_busqueda_se_conserva_en_contexto(self):
+        resp = self.client.get(reverse("app_venta"), {"q": "mar"})
+        self.assertEqual(resp.context["q"], "mar")
+        self.assertContains(resp, 'value="mar"')
+
+    def test_productos_de_otro_negocio_no_aparecen_en_busqueda(self):
+        otro_negocio = _negocio("Ajeno Busqueda")
+        _producto(otro_negocio, "Ricota Ajena")
+        resp = self.client.get(reverse("app_venta"), {"q": "Ricota"})
+        productos = resp.context["productos"]
+        negocios = {p.negocio_id for p in productos}
+        self.assertEqual(negocios, {self.negocio.pk})
+
+    def test_producto_inactivo_excluido_en_busqueda(self):
+        inactivo = _producto(self.negocio, "Ricotico Inactivo")
+        inactivo.activo = False
+        inactivo.save(update_fields=["activo"])
+        resp = self.client.get(reverse("app_venta"), {"q": "Ricotico"})
+        nombres = [p.nombre for p in resp.context["productos"]]
+        self.assertNotIn("Ricotico Inactivo", nombres)
+
+
+# ---------------------------------------------------------------------------
+# 9–15. Orden por movimiento
+# ---------------------------------------------------------------------------
+
+class POSOrdenPorMovimientoTest(POSBuscadorMixin, TestCase):
+    def setUp(self):
+        self._setup_busqueda("POS Orden Test")
+
+    def test_producto_con_mas_apariciones_aparece_primero(self):
+        # Ricota aparece en 3 ventas, Mármolado en 1
+        for _ in range(3):
+            v = _venta_hace(self.negocio)
+            _item_venta(self.negocio, v, self.producto_ricota, 1)
+        v2 = _venta_hace(self.negocio)
+        _item_venta(self.negocio, v2, self.producto_marmolado, 1)
+
+        resp = self.client.get(reverse("app_venta"))
+        nombres = [p.nombre for p in resp.context["productos"]]
+        self.assertLess(nombres.index("Ricota"), nombres.index("Mármolado"))
+
+    def test_empate_ordena_alfabeticamente(self):
+        # Ambos productos con 1 aparición → desempate alfabético
+        v1 = _venta_hace(self.negocio)
+        _item_venta(self.negocio, v1, self.producto_ricota, 1)
+        v2 = _venta_hace(self.negocio)
+        _item_venta(self.negocio, v2, self.producto_marmolado, 1)
+
+        resp = self.client.get(reverse("app_venta"))
+        nombres = [p.nombre for p in resp.context["productos"]]
+        # "Mármolado" < "Ricota" alfabéticamente
+        self.assertLess(nombres.index("Mármolado"), nombres.index("Ricota"))
+
+    def test_producto_sin_ventas_aparece_despues_de_productos_con_ventas(self):
+        v = _venta_hace(self.negocio)
+        _item_venta(self.negocio, v, self.producto_ricota, 1)
+
+        resp = self.client.get(reverse("app_venta"))
+        nombres = [p.nombre for p in resp.context["productos"]]
+        self.assertIn("Ricota", nombres)
+        self.assertIn("Mármolado", nombres)
+        self.assertLess(nombres.index("Ricota"), nombres.index("Mármolado"))
+
+    def test_venta_fuera_de_30_dias_no_afecta_orden(self):
+        # Mármolado tiene 5 ventas hace 31 días, Ricota tiene 1 venta reciente
+        for _ in range(5):
+            v = _venta_hace(self.negocio, dias=31)
+            _item_venta(self.negocio, v, self.producto_marmolado, 1)
+        v_reciente = _venta_hace(self.negocio, dias=0)
+        _item_venta(self.negocio, v_reciente, self.producto_ricota, 1)
+
+        resp = self.client.get(reverse("app_venta"))
+        nombres = [p.nombre for p in resp.context["productos"]]
+        # Ricota (1 venta en 30d) debe aparecer antes que Mármolado (0 ventas en 30d)
+        self.assertLess(nombres.index("Ricota"), nombres.index("Mármolado"))
+
+    def test_distintas_presentaciones_suman_al_ranking_del_producto_base(self):
+        # Café: sin presentaciones, 1 venta
+        # Facturas (self.producto_con_pv): 3 ventas por distintas presentaciones
+        v0 = _venta_hace(self.negocio)
+        _item_venta(self.negocio, v0, self.producto_sin_pv, 1)  # Café
+
+        for pv in [self.pv_unidad, self.pv_docena, self.pv_unidad]:
+            v = _venta_hace(self.negocio)
+            _item_venta(self.negocio, v, self.producto_con_pv, 1, presentacion=pv)
+
+        resp = self.client.get(reverse("app_venta"))
+        nombres = [p.nombre for p in resp.context["productos"]]
+        self.assertLess(
+            nombres.index(self.producto_con_pv.nombre),
+            nombres.index(self.producto_sin_pv.nombre),
+        )
+
+    def test_carrito_y_presentacion_siguen_funcionando_con_busqueda(self):
+        # Agrega producto con presentación mientras hay búsqueda activa
+        resp = self.client.post(
+            reverse("app_venta_agregar"),
+            {
+                "producto_id": self.producto_con_pv.pk,
+                "presentacion_id": self.pv_docena.pk,
+                "cantidad": "1",
+            },
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+        cart = self._get_cart()
+        self.assertEqual(len(cart), 1)
+        self.assertEqual(cart[0]["presentacion_id"], self.pv_docena.pk)
+
+        # Confirma que el POS sigue cargando con búsqueda y carrito
+        resp2 = self.client.get(reverse("app_venta"), {"q": "Fact"})
+        self.assertEqual(resp2.status_code, 200)
+        self.assertEqual(len(resp2.context["cart"]), 1)
+
+    def test_sin_ventas_historicas_orden_es_alfabetico(self):
+        resp = self.client.get(reverse("app_venta"))
+        productos = list(resp.context["productos"])
+        nombres = [p.nombre for p in productos]
+        self.assertEqual(nombres, sorted(nombres))
