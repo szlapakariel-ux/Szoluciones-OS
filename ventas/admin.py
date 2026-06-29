@@ -11,10 +11,9 @@ from .models import ItemVenta, PresentacionVenta, Venta
 class ItemVentaInline(TabularInline):
     model = ItemVenta
     extra = 1
-    fields = ("producto", "cantidad", "precio_unitario")
-    autocomplete_fields = ("producto",)
+    fields = ("producto", "presentacion", "cantidad", "precio_unitario")
+    autocomplete_fields = ("producto", "presentacion")
     tab = True
-
 
 
 class MovimientoStockVentaInline(TabularInline):
@@ -52,13 +51,6 @@ class VentaAdmin(TenantOwnedAdmin):
 
     items_count.short_description = "Ítems"
 
-
-@admin.register(PresentacionVenta)
-class PresentacionVentaAdmin(TenantOwnedAdmin):
-    list_display = ("producto", "nombre", "factor", "precio", "activo")
-    list_filter = ("activo",)
-    search_fields = ("nombre", "producto__nombre")
-
     def save_related(self, request, form, formsets, change):
         super().save_related(request, form, formsets, change)
         venta: Venta = form.instance
@@ -82,3 +74,10 @@ class PresentacionVentaAdmin(TenantOwnedAdmin):
                     venta_origen=venta,
                     fecha=venta.fecha,
                 )
+
+
+@admin.register(PresentacionVenta)
+class PresentacionVentaAdmin(TenantOwnedAdmin):
+    list_display = ("producto", "nombre", "factor", "precio", "activo")
+    list_filter = ("activo",)
+    search_fields = ("nombre", "producto__nombre")

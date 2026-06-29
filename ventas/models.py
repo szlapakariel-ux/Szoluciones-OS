@@ -64,6 +64,14 @@ class ItemVenta(TenantOwnedModel):
         related_name="items_venta",
         verbose_name="Producto",
     )
+    presentacion = models.ForeignKey(
+        "PresentacionVenta",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="items_venta",
+        verbose_name="Presentación de venta",
+    )
     cantidad = models.DecimalField("Cantidad", max_digits=12, decimal_places=2)
     precio_unitario = models.DecimalField(
         "Precio unitario", max_digits=12, decimal_places=2
@@ -80,9 +88,28 @@ class ItemVenta(TenantOwnedModel):
     def subtotal(self) -> Decimal:
         return self.cantidad * self.precio_unitario
 
+    def clean(self):
+        if self.presentacion_id:
+            pv = self.presentacion
+            if self.producto_id and pv.producto_id != self.producto_id:
+                raise ValidationError(
+                    {"presentacion": "La presentación no pertenece al producto seleccionado."}
+                )
+            if self.negocio_id and pv.negocio_id != self.negocio_id:
+                raise ValidationError(
+                    {"presentacion": "La presentación pertenece a otro negocio."}
+                )
+            if not pv.activo and not self.pk:
+                raise ValidationError(
+                    {"presentacion": "No se puede usar una presentación inactiva en una nueva venta."}
+                )
+
     def save(self, *args, **kwargs):
         if not self.pk and (self.precio_unitario is None or self.precio_unitario == 0):
-            self.precio_unitario = self.producto.precio_venta
+            if self.presentacion_id:
+                self.precio_unitario = self.presentacion.precio
+            else:
+                self.precio_unitario = self.producto.precio_venta
         super().save(*args, **kwargs)
 
 
