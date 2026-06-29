@@ -1,9 +1,9 @@
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db.models import Sum, Value
-from django.db.models.functions import Coalesce
+from django.db.models import Count, Q
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -35,14 +35,28 @@ def venta_rapida(request):
 
     from stock.models import TipoProducto
 
-    productos = (
+    q = request.GET.get("q", "").strip()
+    fecha_desde = timezone.now() - timedelta(days=30)
+
+    productos_qs = (
         Producto.objects.all_tenants()
         .filter(negocio=negocio, activo=True, tipo=TipoProducto.VENTA)
-        .annotate(total_vendido=Coalesce(Sum("items_venta__cantidad"), Value(Decimal("0"))))
-        .order_by("-total_vendido", "nombre")
+        .annotate(
+            frecuencia_30d=Count(
+                "items_venta",
+                filter=Q(items_venta__venta__fecha__gte=fecha_desde),
+                distinct=True,
+            )
+        )
+        .order_by("-frecuencia_30d", "nombre")
     )
 
-    productos_list = list(productos)
+    if q:
+        productos_qs = productos_qs.filter(
+            Q(nombre__icontains=q) | Q(codigo__icontains=q)
+        )
+
+    productos_list = list(productos_qs)
     sin_stock = [p for p in productos_list if p.stock_actual < 0]
 
     return render(request, "app/venta.html", {
@@ -52,6 +66,7 @@ def venta_rapida(request):
         "productos": productos_list,
         "sin_stock": sin_stock,
         "metodos_pago": MovimientoCaja.MetodoPago.choices,
+        "q": q,
     })
 
 
