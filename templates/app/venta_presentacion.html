@@ -1,0 +1,53 @@
+{% extends "app/base.html" %}
+
+{% block title %}Elegir Presentación · Szoluciones OS{% endblock %}
+
+{% block content %}
+
+{% if messages %}
+{% for msg in messages %}
+<div class="mb-3 px-3 py-2 rounded-lg text-sm
+     {% if 'error' in msg.tags %}bg-red-50 text-red-700 border border-red-200
+     {% else %}bg-green-50 text-green-700 border border-green-200{% endif %}">
+    {{ msg }}
+</div>
+{% endfor %}
+{% endif %}
+
+<div class="mb-4">
+    <a href="{% url 'app_venta' %}"
+       class="inline-flex items-center gap-1 text-primary-600 text-sm font-medium active:opacity-70">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+        </svg>
+        Volver al carrito
+    </a>
+</div>
+
+<div class="mb-5">
+    <h2 class="text-base font-semibold text-gray-800">{{ producto.nombre }}</h2>
+    <p class="text-xs text-gray-400 mt-0.5">Elegí una presentación para agregar al carrito.</p>
+</div>
+
+<div class="space-y-3">
+{% for pv in presentaciones %}
+<form method="post" action="{% url 'app_venta_agregar' %}">
+    {% csrf_token %}
+    <input type="hidden" name="producto_id" value="{{ producto.pk }}">
+    <input type="hidden" name="presentacion_id" value="{{ pv.pk }}">
+    <input type="hidden" name="cantidad" value="{{ cantidad }}">
+    <button type="submit"
+            class="w-full bg-white border border-gray-100 shadow-sm rounded-xl px-4 py-4 flex items-center justify-between active:bg-primary-50 active:border-primary-200 transition-colors text-left">
+        <div>
+            <div class="font-semibold text-gray-800 text-sm">{{ pv.nombre }}</div>
+            <div class="text-xs text-gray-400 mt-0.5">${{ pv.precio|floatformat:2 }} · factor {{ pv.factor|floatformat:"-2" }}</div>
+        </div>
+        <svg class="w-5 h-5 text-primary-600 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+        </svg>
+    </button>
+</form>
+{% endfor %}
+</div>
+
+{% endblock %}

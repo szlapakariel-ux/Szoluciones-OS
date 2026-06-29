@@ -654,3 +654,549 @@ class VentaAdminAislamientoTest(TestCase):
             ).exists(),
             "Crear Venta via Admin debe generar MovimientoCaja de INGRESO.",
         )
+
+
+# ===========================================================================
+# ETAPA 3 — Selector de PresentacionVenta en el POS
+# ===========================================================================
+
+class POSHelperMixin:
+    """Factoriza setUp común para los tests del POS."""
+
+    def _setup_pos(self, negocio_nombre="POS Test"):
+        self.negocio = _negocio(negocio_nombre)
+        self.user = _superusuario(self.negocio, username=f"pos_{negocio_nombre[:8]}")
+        self.producto_sin_pv = _producto(self.negocio, "Café")
+        self.producto_con_pv = _producto(self.negocio, "Facturas")
+        self.pv_unidad = _presentacion(
+            self.negocio, self.producto_con_pv, "Unidad", factor="1.00", precio="150.00"
+        )
+        self.pv_docena = _presentacion(
+            self.negocio, self.producto_con_pv, "Docena", factor="12.00", precio="1500.00"
+        )
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _set_cart(self, items):
+        session = self.client.session
+        session["cart"] = items
+        session.save()
+
+    def _get_cart(self):
+        return self.client.session.get("cart", [])
+
+
+# ---------------------------------------------------------------------------
+# 1. venta_rapida — carga de página sin presentaciones
+# ---------------------------------------------------------------------------
+
+class POSVentaRapidaSinPresentacionesTest(POSHelperMixin, TestCase):
+    def setUp(self):
+        self._setup_pos("POS Sin PV")
+
+    def test_pagina_carga_200(self):
+        resp = self.client.get(reverse("app_venta"))
+        self.assertEqual(resp.status_code, 200)
+
+    def test_carrito_vacio_por_defecto(self):
+        resp = self.client.get(reverse("app_venta"))
+        self.assertEqual(resp.context["cart"], [])
+
+    def test_producto_sin_presentacion_tiene_lista_vacia(self):
+        resp = self.client.get(reverse("app_venta"))
+        productos = resp.context["productos"]
+        sin_pv = next(p for p in productos if p.pk == self.producto_sin_pv.pk)
+        self.assertEqual(sin_pv.presentaciones_activas, [])
+
+
+# ---------------------------------------------------------------------------
+# 2. venta_rapida — prefetch presentaciones_activas
+# ---------------------------------------------------------------------------
+
+class POSVentaRapidaConPresentacionesTest(POSHelperMixin, TestCase):
+    def setUp(self):
+        self._setup_pos("POS Con PV")
+
+    def test_producto_con_presentaciones_tiene_lista_no_vacia(self):
+        resp = self.client.get(reverse("app_venta"))
+        productos = resp.context["productos"]
+        con_pv = next(p for p in productos if p.pk == self.producto_con_pv.pk)
+        self.assertEqual(len(con_pv.presentaciones_activas), 2)
+
+    def test_presentaciones_activas_excluye_inactivas(self):
+        pv_inactiva = _presentacion(
+            self.negocio, self.producto_con_pv, "Inactiva", factor="1.00", precio="100.00"
+        )
+        pv_inactiva.activo = False
+        pv_inactiva.save(update_fields=["activo"])
+        resp = self.client.get(reverse("app_venta"))
+        productos = resp.context["productos"]
+        con_pv = next(p for p in productos if p.pk == self.producto_con_pv.pk)
+        pks = [p.pk for p in con_pv.presentaciones_activas]
+        self.assertNotIn(pv_inactiva.pk, pks)
+
+    def test_template_muestra_boton_elegir_para_producto_con_pv(self):
+        resp = self.client.get(reverse("app_venta"))
+        self.assertContains(resp, "Elegir")
+
+    def test_template_muestra_boton_agregar_para_producto_sin_pv(self):
+        resp = self.client.get(reverse("app_venta"))
+        self.assertContains(resp, "Agregar")
+
+
+# ---------------------------------------------------------------------------
+# 3. venta_agregar — Caso A: producto sin presentaciones
+# ---------------------------------------------------------------------------
+
+class POSAgregarSinPresentacionTest(POSHelperMixin, TestCase):
+    def setUp(self):
+        self._setup_pos("POS Agregar Sin PV")
+
+    def test_agrega_producto_sin_presentacion_al_carrito(self):
+        resp = self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": self.producto_sin_pv.pk, "cantidad": "2"},
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+        cart = self._get_cart()
+        self.assertEqual(len(cart), 1)
+        self.assertIsNone(cart[0]["presentacion_id"])
+        self.assertEqual(cart[0]["producto_id"], self.producto_sin_pv.pk)
+
+    def test_agrega_precio_del_producto(self):
+        self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": self.producto_sin_pv.pk, "cantidad": "1"},
+        )
+        cart = self._get_cart()
+        self.assertEqual(Decimal(cart[0]["precio"]), self.producto_sin_pv.precio_venta)
+
+    def test_cantidad_invalida_muestra_error(self):
+        resp = self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": self.producto_sin_pv.pk, "cantidad": "abc"},
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+        self.assertEqual(self._get_cart(), [])
+
+    def test_producto_inexistente_muestra_error(self):
+        resp = self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": 99999, "cantidad": "1"},
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+        self.assertEqual(self._get_cart(), [])
+
+
+# ---------------------------------------------------------------------------
+# 4. venta_agregar — Caso B: producto con presentaciones, sin presentacion_id
+# ---------------------------------------------------------------------------
+
+class POSAgregarConPresentacionRedirectTest(POSHelperMixin, TestCase):
+    def setUp(self):
+        self._setup_pos("POS Redirect PV")
+
+    def test_producto_con_pv_sin_id_redirige_a_seleccion(self):
+        resp = self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": self.producto_con_pv.pk, "cantidad": "1"},
+        )
+        self.assertRedirects(
+            resp,
+            reverse("app_venta_presentacion") + f"?producto_id={self.producto_con_pv.pk}&cantidad=1",
+            fetch_redirect_response=False,
+        )
+
+    def test_carrito_no_modificado_en_redirect(self):
+        self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": self.producto_con_pv.pk, "cantidad": "1"},
+        )
+        self.assertEqual(self._get_cart(), [])
+
+
+# ---------------------------------------------------------------------------
+# 5. venta_agregar — Caso B: producto con presentaciones, presentacion_id válido
+# ---------------------------------------------------------------------------
+
+class POSAgregarConPresentacionValidaTest(POSHelperMixin, TestCase):
+    def setUp(self):
+        self._setup_pos("POS Agregar PV Valida")
+
+    def test_agrega_item_con_presentacion_al_carrito(self):
+        self.client.post(
+            reverse("app_venta_agregar"),
+            {
+                "producto_id": self.producto_con_pv.pk,
+                "presentacion_id": self.pv_docena.pk,
+                "cantidad": "1",
+            },
+        )
+        cart = self._get_cart()
+        self.assertEqual(len(cart), 1)
+        self.assertEqual(cart[0]["presentacion_id"], self.pv_docena.pk)
+        self.assertEqual(cart[0]["presentacion_nombre"], "Docena")
+        self.assertEqual(Decimal(cart[0]["precio"]), Decimal("1500.00"))
+
+    def test_precio_tomado_de_presentacion(self):
+        self.client.post(
+            reverse("app_venta_agregar"),
+            {
+                "producto_id": self.producto_con_pv.pk,
+                "presentacion_id": self.pv_unidad.pk,
+                "cantidad": "1",
+            },
+        )
+        cart = self._get_cart()
+        self.assertEqual(Decimal(cart[0]["precio"]), Decimal("150.00"))
+
+
+# ---------------------------------------------------------------------------
+# 6. venta_agregar — presentacion_id inválida
+# ---------------------------------------------------------------------------
+
+class POSAgregarPresentacionInvalidaTest(POSHelperMixin, TestCase):
+    def setUp(self):
+        self._setup_pos("POS Invalida PV")
+
+    def test_presentacion_otro_negocio_rechazada(self):
+        otro_negocio = _negocio("Ajeno")
+        otro_producto = _producto(otro_negocio, "Alfajores")
+        pv_ajena = _presentacion(otro_negocio, otro_producto, "Unidad", "1.00", "100")
+        resp = self.client.post(
+            reverse("app_venta_agregar"),
+            {
+                "producto_id": self.producto_con_pv.pk,
+                "presentacion_id": pv_ajena.pk,
+                "cantidad": "1",
+            },
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+        self.assertEqual(self._get_cart(), [])
+
+    def test_presentacion_inactiva_rechazada(self):
+        pv_inactiva = _presentacion(
+            self.negocio, self.producto_con_pv, "Inactiva", "1.00", "100"
+        )
+        pv_inactiva.activo = False
+        pv_inactiva.save(update_fields=["activo"])
+        resp = self.client.post(
+            reverse("app_venta_agregar"),
+            {
+                "producto_id": self.producto_con_pv.pk,
+                "presentacion_id": pv_inactiva.pk,
+                "cantidad": "1",
+            },
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+        self.assertEqual(self._get_cart(), [])
+
+    def test_presentacion_producto_distinto_rechazada(self):
+        otro_producto = _producto(self.negocio, "Medialunas")
+        pv_otro = _presentacion(self.negocio, otro_producto, "Unidad", "1.00", "80")
+        resp = self.client.post(
+            reverse("app_venta_agregar"),
+            {
+                "producto_id": self.producto_con_pv.pk,
+                "presentacion_id": pv_otro.pk,
+                "cantidad": "1",
+            },
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+        self.assertEqual(self._get_cart(), [])
+
+
+# ---------------------------------------------------------------------------
+# 7. venta_agregar — merge de líneas en carrito
+# ---------------------------------------------------------------------------
+
+class POSCarritoMergeTest(POSHelperMixin, TestCase):
+    def setUp(self):
+        self._setup_pos("POS Merge")
+
+    def test_misma_presentacion_acumula_cantidad(self):
+        self._set_cart([{
+            "producto_id": self.producto_con_pv.pk,
+            "nombre": self.producto_con_pv.nombre,
+            "precio": "1500.00",
+            "cantidad": "1",
+            "unidad": self.producto_con_pv.unidad_corta,
+            "presentacion_id": self.pv_docena.pk,
+            "presentacion_nombre": "Docena",
+        }])
+        self.client.post(
+            reverse("app_venta_agregar"),
+            {
+                "producto_id": self.producto_con_pv.pk,
+                "presentacion_id": self.pv_docena.pk,
+                "cantidad": "2",
+            },
+        )
+        cart = self._get_cart()
+        self.assertEqual(len(cart), 1)
+        self.assertEqual(Decimal(cart[0]["cantidad"]), Decimal("3"))
+
+    def test_distintas_presentaciones_son_lineas_separadas(self):
+        self._set_cart([{
+            "producto_id": self.producto_con_pv.pk,
+            "nombre": self.producto_con_pv.nombre,
+            "precio": "150.00",
+            "cantidad": "1",
+            "unidad": self.producto_con_pv.unidad_corta,
+            "presentacion_id": self.pv_unidad.pk,
+            "presentacion_nombre": "Unidad",
+        }])
+        self.client.post(
+            reverse("app_venta_agregar"),
+            {
+                "producto_id": self.producto_con_pv.pk,
+                "presentacion_id": self.pv_docena.pk,
+                "cantidad": "1",
+            },
+        )
+        cart = self._get_cart()
+        self.assertEqual(len(cart), 2)
+
+    def test_producto_sin_pv_y_con_pv_son_lineas_separadas(self):
+        self._set_cart([{
+            "producto_id": self.producto_sin_pv.pk,
+            "nombre": self.producto_sin_pv.nombre,
+            "precio": "100.00",
+            "cantidad": "1",
+            "unidad": self.producto_sin_pv.unidad_corta,
+            "presentacion_id": None,
+            "presentacion_nombre": None,
+        }])
+        self.client.post(
+            reverse("app_venta_agregar"),
+            {
+                "producto_id": self.producto_con_pv.pk,
+                "presentacion_id": self.pv_unidad.pk,
+                "cantidad": "1",
+            },
+        )
+        cart = self._get_cart()
+        self.assertEqual(len(cart), 2)
+
+
+# ---------------------------------------------------------------------------
+# 8. venta_seleccionar_presentacion — GET
+# ---------------------------------------------------------------------------
+
+class POSSeleccionarPresentacionTest(POSHelperMixin, TestCase):
+    def setUp(self):
+        self._setup_pos("POS Selector")
+
+    def test_pagina_carga_200_con_presentaciones(self):
+        resp = self.client.get(
+            reverse("app_venta_presentacion"),
+            {"producto_id": self.producto_con_pv.pk, "cantidad": "1"},
+        )
+        self.assertEqual(resp.status_code, 200)
+
+    def test_lista_solo_presentaciones_activas(self):
+        pv_inactiva = _presentacion(
+            self.negocio, self.producto_con_pv, "Inactiva2", "2.00", "200"
+        )
+        pv_inactiva.activo = False
+        pv_inactiva.save(update_fields=["activo"])
+        resp = self.client.get(
+            reverse("app_venta_presentacion"),
+            {"producto_id": self.producto_con_pv.pk, "cantidad": "1"},
+        )
+        pks = [p.pk for p in resp.context["presentaciones"]]
+        self.assertNotIn(pv_inactiva.pk, pks)
+        self.assertIn(self.pv_unidad.pk, pks)
+        self.assertIn(self.pv_docena.pk, pks)
+
+    def test_producto_sin_pv_redirige_con_error(self):
+        resp = self.client.get(
+            reverse("app_venta_presentacion"),
+            {"producto_id": self.producto_sin_pv.pk, "cantidad": "1"},
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+
+    def test_producto_ajeno_redirige_con_error(self):
+        otro_negocio = _negocio("Ajeno Selector")
+        otro_producto = _producto(otro_negocio, "Waffles")
+        resp = self.client.get(
+            reverse("app_venta_presentacion"),
+            {"producto_id": otro_producto.pk, "cantidad": "1"},
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+
+    def test_cantidad_invalida_redirige(self):
+        resp = self.client.get(
+            reverse("app_venta_presentacion"),
+            {"producto_id": self.producto_con_pv.pk, "cantidad": "xxx"},
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+
+    def test_template_muestra_nombre_producto(self):
+        resp = self.client.get(
+            reverse("app_venta_presentacion"),
+            {"producto_id": self.producto_con_pv.pk, "cantidad": "1"},
+        )
+        self.assertContains(resp, self.producto_con_pv.nombre)
+
+
+# ---------------------------------------------------------------------------
+# 9. venta_confirmar — atomicidad con presentacion inválida
+# ---------------------------------------------------------------------------
+
+class POSConfirmarAtomicidadTest(POSHelperMixin, TestCase):
+    def setUp(self):
+        self._setup_pos("POS Atomicidad")
+
+    def test_presentacion_invalida_no_crea_venta(self):
+        from ventas.models import Venta
+        self._set_cart([{
+            "producto_id": self.producto_con_pv.pk,
+            "nombre": self.producto_con_pv.nombre,
+            "precio": "1500.00",
+            "cantidad": "1",
+            "unidad": self.producto_con_pv.unidad_corta,
+            "presentacion_id": 99999,
+            "presentacion_nombre": "Fantasma",
+        }])
+        count_antes = Venta.objects.all_tenants().count()
+        self.client.post(
+            reverse("app_venta_confirmar"),
+            {"metodo_pago": "EFECTIVO"},
+        )
+        self.assertEqual(Venta.objects.all_tenants().count(), count_antes)
+
+    def test_presentacion_invalida_no_crea_movimiento_caja(self):
+        from caja.models import MovimientoCaja
+        self._set_cart([{
+            "producto_id": self.producto_con_pv.pk,
+            "nombre": self.producto_con_pv.nombre,
+            "precio": "1500.00",
+            "cantidad": "1",
+            "unidad": self.producto_con_pv.unidad_corta,
+            "presentacion_id": 99999,
+            "presentacion_nombre": "Fantasma",
+        }])
+        count_antes = MovimientoCaja.objects.all_tenants().count()
+        self.client.post(
+            reverse("app_venta_confirmar"),
+            {"metodo_pago": "EFECTIVO"},
+        )
+        self.assertEqual(MovimientoCaja.objects.all_tenants().count(), count_antes)
+
+    def test_presentacion_invalida_no_crea_item_venta(self):
+        self._set_cart([{
+            "producto_id": self.producto_con_pv.pk,
+            "nombre": self.producto_con_pv.nombre,
+            "precio": "1500.00",
+            "cantidad": "1",
+            "unidad": self.producto_con_pv.unidad_corta,
+            "presentacion_id": 99999,
+            "presentacion_nombre": "Fantasma",
+        }])
+        count_antes = ItemVenta.objects.all_tenants().count()
+        self.client.post(
+            reverse("app_venta_confirmar"),
+            {"metodo_pago": "EFECTIVO"},
+        )
+        self.assertEqual(ItemVenta.objects.all_tenants().count(), count_antes)
+
+    def test_presentacion_invalida_carrito_permanece(self):
+        cart_inicial = [{
+            "producto_id": self.producto_con_pv.pk,
+            "nombre": self.producto_con_pv.nombre,
+            "precio": "1500.00",
+            "cantidad": "1",
+            "unidad": self.producto_con_pv.unidad_corta,
+            "presentacion_id": 99999,
+            "presentacion_nombre": "Fantasma",
+        }]
+        self._set_cart(cart_inicial)
+        self.client.post(
+            reverse("app_venta_confirmar"),
+            {"metodo_pago": "EFECTIVO"},
+        )
+        self.assertEqual(len(self._get_cart()), 1)
+
+
+# ---------------------------------------------------------------------------
+# 10. venta_confirmar — confirmación exitosa con presentación
+# ---------------------------------------------------------------------------
+
+class POSConfirmarConPresentacionTest(POSHelperMixin, TestCase):
+    def setUp(self):
+        self._setup_pos("POS Confirmar PV")
+
+    def _confirmar_con_docena(self):
+        self._set_cart([{
+            "producto_id": self.producto_con_pv.pk,
+            "nombre": self.producto_con_pv.nombre,
+            "precio": "1500.00",
+            "cantidad": "1",
+            "unidad": self.producto_con_pv.unidad_corta,
+            "presentacion_id": self.pv_docena.pk,
+            "presentacion_nombre": "Docena",
+        }])
+        self.client.post(
+            reverse("app_venta_confirmar"),
+            {"metodo_pago": "EFECTIVO"},
+        )
+
+    def test_crea_venta_con_presentacion(self):
+        from ventas.models import Venta
+        self._confirmar_con_docena()
+        self.assertTrue(Venta.objects.all_tenants().filter(negocio=self.negocio).exists())
+
+    def test_item_venta_guarda_presentacion_id(self):
+        self._confirmar_con_docena()
+        item = ItemVenta.objects.all_tenants().filter(
+            negocio=self.negocio, presentacion=self.pv_docena
+        ).first()
+        self.assertIsNotNone(item)
+        self.assertEqual(item.presentacion_id, self.pv_docena.pk)
+
+    def test_stock_descuenta_factor(self):
+        stock_antes = self.producto_con_pv.stock_actual
+        self._confirmar_con_docena()
+        self.producto_con_pv.refresh_from_db()
+        self.assertEqual(
+            self.producto_con_pv.stock_actual,
+            stock_antes - Decimal("12"),
+        )
+
+    def test_crea_movimiento_caja(self):
+        from caja.models import MovimientoCaja
+        self._confirmar_con_docena()
+        self.assertTrue(
+            MovimientoCaja.objects.all_tenants().filter(
+                negocio=self.negocio,
+                tipo=MovimientoCaja.Tipo.INGRESO,
+                monto=Decimal("1500.00"),
+            ).exists()
+        )
+
+    def test_carrito_vaciado_tras_confirmar(self):
+        self._confirmar_con_docena()
+        self.assertEqual(self._get_cart(), [])
+
+    def test_confirmar_sin_presentacion_sigue_funcionando(self):
+        """Caso A no regresión: producto sin PV se confirma correctamente."""
+        from ventas.models import Venta
+        self._set_cart([{
+            "producto_id": self.producto_sin_pv.pk,
+            "nombre": self.producto_sin_pv.nombre,
+            "precio": "100.00",
+            "cantidad": "2",
+            "unidad": self.producto_sin_pv.unidad_corta,
+            "presentacion_id": None,
+            "presentacion_nombre": None,
+        }])
+        self.client.post(
+            reverse("app_venta_confirmar"),
+            {"metodo_pago": "EFECTIVO"},
+        )
+        item = ItemVenta.objects.all_tenants().filter(
+            negocio=self.negocio, producto=self.producto_sin_pv
+        ).first()
+        self.assertIsNotNone(item)
+        self.assertIsNone(item.presentacion_id)
