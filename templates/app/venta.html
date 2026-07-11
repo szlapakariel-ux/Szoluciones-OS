@@ -144,6 +144,9 @@
                 {% if p.stock_actual >= 0 %}Stock: {{ p.stock_actual|floatformat:"-2" }} {{ p.unidad_corta }}{% else %}<span class="text-red-400">Ajustar stock</span>{% endif %}
                 &nbsp;·&nbsp;
                 ${{ p.precio_venta|floatformat:2 }} / {{ p.unidad_corta }}
+                {% if p.cantidad_minima_mayorista and p.precio_mayorista %}
+                &nbsp;·&nbsp;<span class="text-primary-600">{{ p.cantidad_minima_mayorista|floatformat:"-0" }}+ a ${{ p.precio_mayorista|floatformat:2 }}</span>
+                {% endif %}
             </div>
         </div>
         <div class="flex items-center gap-2 shrink-0">

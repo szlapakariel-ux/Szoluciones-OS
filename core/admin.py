@@ -43,22 +43,31 @@ class TenantOwnedAdmin(ModelAdmin):
             return False
         return super().has_add_permission(request)
 
+    def _bypass_provisorio(self, request, obj=None):
+        # PROVISORIO (etapa de prueba en producción): el dueño del negocio
+        # puede editar/borrar cualquier registro propio para corregir cargas
+        # de stock/ventas reales, sin depender de qué permisos Django tenga
+        # asignados. Reevaluar/retirar este bypass cuando termine la prueba.
+        if not (request.user.is_authenticated and (request.user.is_superuser or request.user.negocio_id)):
+            return None
+        if obj is not None and hasattr(obj, "negocio_id") and request.user.negocio_id:
+            return obj.negocio_id == request.user.negocio_id
+        return True
+
     def has_change_permission(self, request, obj=None):
         if getattr(request, "negocio_frozen", False):
             return False
+        bypass = self._bypass_provisorio(request, obj)
+        if bypass is not None:
+            return bypass
         return super().has_change_permission(request, obj)
 
     def has_delete_permission(self, request, obj=None):
-        # PROVISORIO (etapa de prueba en producción): el dueño del negocio
-        # puede borrar cualquier registro propio para corregir cargas de
-        # stock/ventas reales, sin depender de qué permisos Django tenga
-        # asignados. Reevaluar/retirar este bypass cuando termine la prueba.
         if getattr(request, "negocio_frozen", False):
             return False
-        if request.user.is_authenticated and (request.user.is_superuser or request.user.negocio_id):
-            if obj is not None and hasattr(obj, "negocio_id") and request.user.negocio_id:
-                return obj.negocio_id == request.user.negocio_id
-            return True
+        bypass = self._bypass_provisorio(request, obj)
+        if bypass is not None:
+            return bypass
         return super().has_delete_permission(request, obj)
 
 
