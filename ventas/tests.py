@@ -1672,3 +1672,130 @@ class PresentacionVentaFraccionariaEnProductoFraccionableTest(TestCase):
         item.delete()
         self.torta.refresh_from_db()
         self.assertEqual(self.torta.stock_actual, Decimal("2"))
+
+
+# ===========================================================================
+# ETAPA 6 — Combos en el POS (venta rápida)
+# ===========================================================================
+
+class POSComboMixin(POSHelperMixin):
+    def _setup_pos_combo(self, negocio_nombre="POS Combo"):
+        self._setup_pos(negocio_nombre)
+        self.vainilla = _torta(self.negocio, "Vainilla")
+        self.ricota = _torta(self.negocio, "Ricota")
+        _ingresar_stock(self.negocio, self.vainilla, 3)
+        _ingresar_stock(self.negocio, self.ricota, 3)
+        self.combo = _combo(self.negocio, "Combo 6", "7600")
+        ComboItem.objects.all_tenants().create(
+            negocio=self.negocio, combo=self.combo, producto=self.vainilla, cantidad=1
+        )
+        ComboItem.objects.all_tenants().create(
+            negocio=self.negocio, combo=self.combo, producto=self.ricota, cantidad=1
+        )
+
+
+class POSComboListadoTest(POSComboMixin, TestCase):
+    def setUp(self):
+        self._setup_pos_combo("POS Combo Listado")
+
+    def test_combo_activo_aparece_en_pagina(self):
+        resp = self.client.get(reverse("app_venta"))
+        self.assertContains(resp, "Combo 6")
+
+    def test_combo_inactivo_no_aparece(self):
+        self.combo.activo = False
+        self.combo.save(update_fields=["activo"])
+        resp = self.client.get(reverse("app_venta"))
+        self.assertNotContains(resp, "Combo 6")
+
+    def test_busqueda_filtra_combos_por_nombre(self):
+        otro = _combo(self.negocio, "Combo 7", "6200")
+        resp = self.client.get(reverse("app_venta"), {"q": "Combo 6"})
+        nombres = [c.nombre for c in resp.context["combos"]]
+        self.assertIn("Combo 6", nombres)
+        self.assertNotIn("Combo 7", nombres)
+
+
+class POSComboAgregarTest(POSComboMixin, TestCase):
+    def setUp(self):
+        self._setup_pos_combo("POS Combo Agregar")
+
+    def test_agrega_combo_al_carrito(self):
+        self.client.post(
+            reverse("app_venta_agregar"),
+            {"combo_id": self.combo.pk, "cantidad": "1"},
+        )
+        cart = self._get_cart()
+        self.assertEqual(len(cart), 1)
+        self.assertEqual(cart[0]["combo_id"], self.combo.pk)
+        self.assertEqual(Decimal(cart[0]["precio"]), Decimal("7600"))
+
+    def test_combo_invalido_no_agrega(self):
+        resp = self.client.post(
+            reverse("app_venta_agregar"),
+            {"combo_id": 99999, "cantidad": "1"},
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+        self.assertEqual(self._get_cart(), [])
+
+    def test_repetir_mismo_combo_acumula_cantidad(self):
+        self.client.post(reverse("app_venta_agregar"), {"combo_id": self.combo.pk, "cantidad": "1"})
+        self.client.post(reverse("app_venta_agregar"), {"combo_id": self.combo.pk, "cantidad": "2"})
+        cart = self._get_cart()
+        self.assertEqual(len(cart), 1)
+        self.assertEqual(Decimal(cart[0]["cantidad"]), Decimal("3"))
+
+
+class POSComboConfirmarTest(POSComboMixin, TestCase):
+    def setUp(self):
+        self._setup_pos_combo("POS Combo Confirmar")
+
+    def _confirmar_combo(self, cantidad="1"):
+        self._set_cart([{
+            "producto_id": None,
+            "combo_id": self.combo.pk,
+            "nombre": self.combo.nombre,
+            "precio": "7600",
+            "cantidad": cantidad,
+            "unidad": "combo",
+            "presentacion_id": None,
+            "presentacion_nombre": None,
+        }])
+        return self.client.post(reverse("app_venta_confirmar"), {"metodo_pago": "EFECTIVO"})
+
+    def test_confirmar_crea_item_venta_con_combo(self):
+        self._confirmar_combo()
+        item = ItemVenta.objects.all_tenants().filter(negocio=self.negocio, combo=self.combo).first()
+        self.assertIsNotNone(item)
+        self.assertEqual(item.precio_unitario, Decimal("7600"))
+
+    def test_confirmar_descuenta_stock_de_ambos_componentes(self):
+        self._confirmar_combo()
+        self.vainilla.refresh_from_db()
+        self.ricota.refresh_from_db()
+        self.assertEqual(self.vainilla.stock_actual, Decimal("2"))
+        self.assertEqual(self.ricota.stock_actual, Decimal("2"))
+
+    def test_confirmar_crea_movimiento_caja_por_precio_del_combo(self):
+        from caja.models import MovimientoCaja
+        self._confirmar_combo()
+        self.assertTrue(
+            MovimientoCaja.objects.all_tenants().filter(
+                negocio=self.negocio, tipo=MovimientoCaja.Tipo.INGRESO, monto=Decimal("7600"),
+            ).exists()
+        )
+
+    def test_combo_sin_stock_no_registra_venta(self):
+        """Si algún componente no tiene unidades cerradas, la venta completa
+        del combo se rechaza (transacción atómica) en vez de vender la mitad."""
+        from stock.models import EstadoUnidadFisica, UnidadFisica
+        UnidadFisica.objects.all_tenants().filter(producto=self.vainilla).delete()
+        count_antes = Venta.objects.all_tenants().count()
+        self._confirmar_combo()
+        self.assertEqual(Venta.objects.all_tenants().count(), count_antes)
+        self.ricota.refresh_from_db()
+        self.assertEqual(self.ricota.stock_actual, Decimal("3"), "No debe descontarse nada si falló el combo.")
+
+    def test_carrito_vaciado_tras_confirmar_combo(self):
+        self._confirmar_combo()
+        self.assertEqual(self._get_cart(), [])

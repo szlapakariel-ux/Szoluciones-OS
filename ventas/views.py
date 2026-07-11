@@ -26,7 +26,7 @@ def venta_rapida(request):
 
     from caja.models import MovimientoCaja
     from stock.models import Producto, TipoProducto
-    from ventas.models import PresentacionVenta
+    from ventas.models import Combo, PresentacionVenta
 
     q = request.GET.get("q", "").strip()
     fecha_desde = timezone.now() - timedelta(days=30)
@@ -61,10 +61,18 @@ def venta_rapida(request):
         .order_by("-frecuencia_30d", "nombre")
     )
 
+    combos = list(
+        Combo.objects.all_tenants()
+        .filter(negocio=negocio, activo=True)
+        .prefetch_related("items__producto")
+        .order_by("nombre")
+    )
+
     if q:
         productos = productos.filter(
             Q(nombre__icontains=q) | Q(codigo__icontains=q)
         )
+        combos = [c for c in combos if q.lower() in c.nombre.lower()]
 
     productos_list = list(productos)
     sin_stock = [p for p in productos_list if p.stock_actual < 0]
@@ -74,6 +82,7 @@ def venta_rapida(request):
         "cart": cart,
         "total_fmt": _fmt(total),
         "productos": productos_list,
+        "combos": combos,
         "sin_stock": sin_stock,
         "metodos_pago": MovimientoCaja.MetodoPago.choices,
         "q": q,
@@ -88,11 +97,10 @@ def venta_agregar(request):
         return redirect("/admin/")
 
     from stock.models import Producto
-    from ventas.models import PresentacionVenta
+    from ventas.models import Combo, PresentacionVenta
 
-    producto_id = request.POST.get("producto_id")
+    combo_id = request.POST.get("combo_id", "").strip()
     cantidad_raw = request.POST.get("cantidad", "1")
-    presentacion_id_raw = request.POST.get("presentacion_id", "").strip()
 
     try:
         cantidad = Decimal(cantidad_raw.replace(",", "."))
@@ -101,6 +109,35 @@ def venta_agregar(request):
     except (InvalidOperation, ValueError):
         messages.error(request, "Cantidad inválida.")
         return redirect("app_venta")
+
+    if combo_id:
+        try:
+            combo = Combo.objects.all_tenants().get(pk=combo_id, negocio=negocio, activo=True)
+        except Combo.DoesNotExist:
+            messages.error(request, "Combo no encontrado.")
+            return redirect("app_venta")
+
+        cart = request.session.get("cart", [])
+        for item in cart:
+            if item.get("combo_id") == combo.pk:
+                item["cantidad"] = str(Decimal(str(item["cantidad"])) + cantidad)
+                break
+        else:
+            cart.append({
+                "producto_id": None,
+                "combo_id": combo.pk,
+                "nombre": combo.nombre,
+                "precio": str(combo.precio),
+                "cantidad": str(cantidad),
+                "unidad": "combo",
+                "presentacion_id": None,
+                "presentacion_nombre": None,
+            })
+        request.session["cart"] = cart
+        return redirect("app_venta")
+
+    producto_id = request.POST.get("producto_id")
+    presentacion_id_raw = request.POST.get("presentacion_id", "").strip()
 
     try:
         producto = Producto.objects.all_tenants().get(pk=producto_id, negocio=negocio)
@@ -147,6 +184,7 @@ def venta_agregar(request):
     else:
         cart.append({
             "producto_id": producto.pk,
+            "combo_id": None,
             "nombre": producto.nombre,
             "precio": precio,
             "cantidad": str(cantidad),
@@ -225,7 +263,7 @@ def venta_confirmar(request):
         return redirect("app_venta")
 
     from caja.models import MovimientoCaja
-    from ventas.models import ItemVenta, PresentacionVenta, Venta
+    from ventas.models import Combo, ItemVenta, PresentacionVenta, Venta
 
     metodo_pago = request.POST.get("metodo_pago", MovimientoCaja.MetodoPago.EFECTIVO)
     valid_methods = {c[0] for c in MovimientoCaja.MetodoPago.choices}
@@ -241,6 +279,23 @@ def venta_confirmar(request):
                 total=Decimal("0"),
             )
             for item in cart:
+                combo_id = item.get("combo_id")
+                if combo_id is not None:
+                    try:
+                        Combo.objects.all_tenants().get(pk=combo_id, negocio=negocio, activo=True)
+                    except Combo.DoesNotExist:
+                        raise ValueError(
+                            f"Combo inválido: '{item.get('nombre', 'combo')}'."
+                        )
+                    ItemVenta.objects.create(
+                        negocio=negocio,
+                        venta=venta,
+                        combo_id=combo_id,
+                        cantidad=Decimal(str(item["cantidad"])),
+                        precio_unitario=Decimal(str(item["precio"])),
+                    )
+                    continue
+
                 presentacion_id = item.get("presentacion_id")
                 if presentacion_id is not None:
                     try:
