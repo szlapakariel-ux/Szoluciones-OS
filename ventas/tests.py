@@ -815,6 +815,21 @@ class POSAgregarConPresentacionRedirectTest(POSHelperMixin, TestCase):
         )
         self.assertEqual(self._get_cart(), [])
 
+    def test_sin_presentacion_evita_el_redirect_y_agrega_cantidad_suelta(self):
+        """Un producto CON presentaciones configuradas (ej: 'Media docena') debe
+        poder venderse igual en cantidad suelta a precio de lista, sin quedar
+        forzado a elegir solo entre las presentaciones predefinidas."""
+        resp = self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": self.producto_con_pv.pk, "cantidad": "3", "sin_presentacion": "1"},
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+        cart = self._get_cart()
+        self.assertEqual(len(cart), 1)
+        self.assertIsNone(cart[0]["presentacion_id"])
+        self.assertEqual(Decimal(cart[0]["cantidad"]), Decimal("3"))
+        self.assertEqual(Decimal(cart[0]["precio"]), self.producto_con_pv.precio_venta)
+
 
 # ---------------------------------------------------------------------------
 # 5. venta_agregar — Caso B: producto con presentaciones, presentacion_id válido
