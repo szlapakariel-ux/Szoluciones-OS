@@ -29,6 +29,30 @@
     <p class="text-xs text-gray-400 mt-0.5">Elegí una presentación para agregar al carrito.</p>
 </div>
 
+<form method="post" action="{% url 'app_venta_agregar' %}" class="mb-4">
+    {% csrf_token %}
+    <input type="hidden" name="producto_id" value="{{ producto.pk }}">
+    <input type="hidden" name="sin_presentacion" value="1">
+    <div class="w-full bg-primary-50 border border-primary-200 rounded-xl px-4 py-4">
+        <div class="font-semibold text-gray-800 text-sm mb-1">Cantidad suelta (precio de lista)</div>
+        <div class="text-xs text-gray-500 mb-3">
+            ${{ precio_suelto|floatformat:2 }} c/u para {{ cantidad }}
+            {% if producto.cantidad_minima_mayorista and producto.precio_mayorista %}
+            (1-{{ producto.cantidad_minima_mayorista|add:"-1" }}: ${{ producto.precio_venta|floatformat:2 }} ·
+            {{ producto.cantidad_minima_mayorista|floatformat:"-0" }}+: ${{ producto.precio_mayorista|floatformat:2 }})
+            {% endif %}
+        </div>
+        <div class="flex items-center gap-2">
+            <input type="number" name="cantidad" value="{{ cantidad }}" min="0.01" step="0.01"
+                   class="w-20 border border-primary-300 rounded-lg text-center text-sm py-2 px-1 focus:outline-none focus:ring-2 focus:ring-primary-400 bg-white">
+            <button type="submit"
+                    class="flex-1 bg-primary-600 text-white rounded-xl px-3 py-2.5 text-sm font-semibold active:bg-primary-700 transition-colors">
+                + Agregar sueltas
+            </button>
+        </div>
+    </div>
+</form>
+
 <div class="space-y-3">
 {% for pv in presentaciones %}
 <form method="post" action="{% url 'app_venta_agregar' %}">

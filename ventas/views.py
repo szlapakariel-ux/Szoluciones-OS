@@ -138,6 +138,7 @@ def venta_agregar(request):
 
     producto_id = request.POST.get("producto_id")
     presentacion_id_raw = request.POST.get("presentacion_id", "").strip()
+    sin_presentacion = request.POST.get("sin_presentacion", "").strip()
 
     try:
         producto = Producto.objects.all_tenants().get(pk=producto_id, negocio=negocio)
@@ -160,7 +161,7 @@ def venta_agregar(request):
         except PresentacionVenta.DoesNotExist:
             messages.error(request, "Presentación no válida.")
             return redirect("app_venta")
-    else:
+    elif not sin_presentacion:
         tiene_presentaciones = PresentacionVenta.objects.all_tenants().filter(
             producto=producto, negocio=negocio, activo=True
         ).exists()
@@ -240,6 +241,7 @@ def venta_seleccionar_presentacion(request):
         "producto": producto,
         "presentaciones": presentaciones,
         "cantidad": str(cantidad),
+        "precio_suelto": producto.precio_para_cantidad(cantidad),
     })
 
 
