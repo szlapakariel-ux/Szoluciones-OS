@@ -19,7 +19,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from core.models import Negocio
-from stock.models import Producto
+from stock.models import MovimientoStock, Producto
 from ventas.models import Combo, ComboItem, PresentacionVenta
 
 # nombre_producto_madre -> porciones por unidad entera
@@ -94,6 +94,8 @@ class Command(BaseCommand):
         with transaction.atomic():
             self._configurar_porciones(negocio, aplicar)
             self._migrar_presentaciones(negocio, aplicar)
+            self._consolidar_facturas_por_docena(negocio, aplicar)
+            self._configurar_precio_mayor_facturas(negocio, aplicar)
             self._crear_combos(negocio, aplicar)
             if not aplicar:
                 transaction.set_rollback(True)
@@ -136,6 +138,53 @@ class Command(BaseCommand):
                     suelto.activo = False
                     suelto.save(update_fields=["activo"])
                     self.stdout.write(f"    -> '{nombre_suelto}' desactivado (queda oculto del POS, no se borra).")
+
+    def _consolidar_facturas_por_docena(self, negocio, aplicar):
+        """'Facturas 1 doc.' trackea stock en docenas, por separado de '1 Factura'
+        (que trackea por unidad) — dos contadores de stock desconectados para el
+        mismo producto físico. Se suma el equivalente en unidades a '1 Factura'
+        y se desactiva 'Facturas 1 doc.' para que todo quede por unidad."""
+        self.stdout.write("\n== Consolidar stock de facturas a unidades (no por docena) ==")
+        docena = self._producto(negocio, "Facturas 1 doc.")
+        unidad = self._producto(negocio, "1 Factura")
+        if not docena or not unidad:
+            self.stdout.write(self.style.ERROR("  ✗ No se encontró 'Facturas 1 doc.' o '1 Factura' — omitido."))
+            return
+        if not docena.activo or docena.stock_actual == 0:
+            self.stdout.write("  'Facturas 1 doc.' ya está desactivado o sin stock — nada que consolidar.")
+            return
+        equivalente = docena.stock_actual * 12
+        self.stdout.write(
+            f"  'Facturas 1 doc.' tiene {docena.stock_actual} docenas -> se suman "
+            f"{equivalente} unidades a '1 Factura' (stock actual: {unidad.stock_actual}) "
+            f"y se desactiva 'Facturas 1 doc.'."
+        )
+        if aplicar:
+            MovimientoStock.objects.all_tenants().create(
+                negocio=negocio, producto=unidad, tipo=MovimientoStock.Tipo.INGRESO,
+                cantidad=equivalente,
+                motivo="Consolidación de stock desde 'Facturas 1 doc.' (docena → unidad)",
+            )
+            MovimientoStock.objects.all_tenants().create(
+                negocio=negocio, producto=docena, tipo=MovimientoStock.Tipo.AJUSTE,
+                cantidad=Decimal("0"),
+                motivo="Consolidado a '1 Factura' por unidad",
+            )
+            docena.activo = False
+            docena.save(update_fields=["activo"])
+
+    def _configurar_precio_mayor_facturas(self, negocio, aplicar):
+        self.stdout.write("\n== Precio por mayor (1 Factura) ==")
+        unidad = self._producto(negocio, "1 Factura")
+        if not unidad:
+            self.stdout.write(self.style.ERROR("  ✗ No se encontró '1 Factura' — omitido."))
+            return
+        self.stdout.write("  1 a 5 unidades: $800 c/u (precio_venta) · 6+ unidades: $700 c/u (precio_mayorista)")
+        if aplicar:
+            unidad.precio_venta = Decimal("800")
+            unidad.cantidad_minima_mayorista = 6
+            unidad.precio_mayorista = Decimal("700")
+            unidad.save(update_fields=["precio_venta", "cantidad_minima_mayorista", "precio_mayorista"])
 
     def _crear_combos(self, negocio, aplicar):
         self.stdout.write("\n== Combos ==")

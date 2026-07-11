@@ -1908,3 +1908,64 @@ class POSPrecioMayoristaTest(TestCase):
         self.assertIsNotNone(item)
         self.assertEqual(item.precio_unitario, Decimal("700"))
         self.assertEqual(item.subtotal, Decimal("5600"))
+
+
+# ===========================================================================
+# ETAPA 8 — comando setup_combos_iniciales: consolidar facturas por docena
+# ===========================================================================
+
+from io import StringIO
+
+from django.core.management import call_command
+from stock.models import UnidadMedida
+
+
+class ConsolidarFacturasPorDocenaTest(TestCase):
+    def setUp(self):
+        self.negocio = _negocio("Consolidar Facturas")
+        self.docena = Producto.objects.all_tenants().create(
+            negocio=self.negocio, nombre="Facturas 1 doc.", tipo=TipoProducto.VENTA,
+            precio_venta=Decimal("8000"), stock_actual=Decimal("31.93"),
+            unidad_medida=UnidadMedida.DOCENA,
+        )
+        self.unidad = Producto.objects.all_tenants().create(
+            negocio=self.negocio, nombre="1 Factura", tipo=TipoProducto.VENTA,
+            precio_venta=Decimal("800"), stock_actual=Decimal("46"),
+        )
+
+    def _run(self, aplicar=False):
+        args = ["--negocio", self.negocio.nombre]
+        if aplicar:
+            args.append("--aplicar")
+        call_command("setup_combos_iniciales", *args, stdout=StringIO())
+
+    def test_dry_run_no_modifica_nada(self):
+        self._run(aplicar=False)
+        self.docena.refresh_from_db()
+        self.unidad.refresh_from_db()
+        self.assertTrue(self.docena.activo)
+        self.assertEqual(self.docena.stock_actual, Decimal("31.93"))
+        self.assertEqual(self.unidad.stock_actual, Decimal("46"))
+
+    def test_aplicar_suma_equivalente_en_unidades(self):
+        self._run(aplicar=True)
+        self.unidad.refresh_from_db()
+        self.assertEqual(self.unidad.stock_actual, Decimal("429.16"))  # 46 + 31.93*12
+
+    def test_aplicar_desactiva_y_vacia_la_docena(self):
+        self._run(aplicar=True)
+        self.docena.refresh_from_db()
+        self.assertFalse(self.docena.activo)
+        self.assertEqual(self.docena.stock_actual, Decimal("0.00"))
+
+    def test_correrlo_dos_veces_no_duplica(self):
+        self._run(aplicar=True)
+        self._run(aplicar=True)
+        self.unidad.refresh_from_db()
+        self.assertEqual(self.unidad.stock_actual, Decimal("429.16"))
+
+    def test_configura_precio_por_mayor_en_1_factura(self):
+        self._run(aplicar=True)
+        self.unidad.refresh_from_db()
+        self.assertEqual(self.unidad.cantidad_minima_mayorista, 6)
+        self.assertEqual(self.unidad.precio_mayorista, Decimal("700"))
