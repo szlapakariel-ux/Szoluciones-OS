@@ -9,7 +9,7 @@ from unfold.admin import TabularInline
 from core.admin import TenantOwnedAdmin
 from ventas.models import PresentacionVenta
 
-from .models import MovimientoStock, Producto
+from .models import MovimientoStock, Producto, UnidadFisica
 
 
 def _fmt(amount):
@@ -39,7 +39,7 @@ class ProductoAdmin(TenantOwnedAdmin):
     search_fields = ("nombre", "codigo")
     fieldsets = (
         ("Identificación", {"fields": ("nombre", "tipo", "codigo", "presentacion", "unidad_medida", "activo")}),
-        ("Stock", {"fields": ("stock_actual", "stock_minimo")}),
+        ("Stock", {"fields": ("stock_actual", "stock_minimo", "porciones_por_unidad")}),
         ("Precios", {"fields": ("costo", "precio_venta")}),
     )
     readonly_fields = ("stock_actual",)
@@ -92,3 +92,12 @@ class MovimientoStockAdmin(TenantOwnedAdmin):
         super().save_model(request, obj, form, change)
         if not change:
             obj.aplicar_a_stock()
+
+
+@admin.register(UnidadFisica)
+class UnidadFisicaAdmin(TenantOwnedAdmin):
+    list_display = ("producto", "estado", "porciones_restantes", "actualizado_en")
+    list_filter = ("estado",)
+    search_fields = ("producto__nombre",)
+    autocomplete_fields = ("producto",)
+    readonly_fields = ("creado_en", "actualizado_en")

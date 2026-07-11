@@ -1386,3 +1386,237 @@ class POSOrdenPorMovimientoTest(POSBuscadorMixin, TestCase):
         productos = list(resp.context["productos"])
         nombres = [p.nombre for p in productos]
         self.assertEqual(nombres, sorted(nombres))
+
+
+# ===========================================================================
+# ETAPA 5 — Combos y venta fraccionada (tortas/budines)
+# ===========================================================================
+
+from stock.models import EstadoUnidadFisica, MovimientoStock as _MovimientoStock, UnidadFisica
+
+from .models import Combo, ComboItem
+
+
+def _torta(negocio, nombre="Torta Vainilla", porciones_por_unidad=4):
+    return Producto.objects.all_tenants().create(
+        negocio=negocio, nombre=nombre, tipo=TipoProducto.VENTA,
+        costo=Decimal("500"), precio_venta=Decimal("2000"),
+        porciones_por_unidad=porciones_por_unidad,
+    )
+
+
+def _ingresar_stock(negocio, producto, cantidad):
+    """Da de alta stock real (decimal + unidades físicas cerradas) vía Compra/Ingreso,
+    tal como entraría en producción real."""
+    _MovimientoStock.objects.all_tenants().create(
+        negocio=negocio, producto=producto, tipo=_MovimientoStock.Tipo.INGRESO,
+        cantidad=Decimal(cantidad), motivo="Ingreso test",
+    )
+
+
+def _combo(negocio, nombre="Combo 1", precio="6900"):
+    return Combo.objects.all_tenants().create(negocio=negocio, nombre=nombre, precio=Decimal(precio))
+
+
+class ComboVentaEnterosTest(TestCase):
+    """Combo de productos enteros distintos (ej: Combo 1: vainilla + ricota + toffi)."""
+
+    def setUp(self):
+        self.negocio = _negocio("Combo Enteros")
+        self.vainilla = _torta(self.negocio, "Vainilla")
+        self.ricota = _torta(self.negocio, "Ricota")
+        self.toffi = _torta(self.negocio, "Toffi")
+        for p in (self.vainilla, self.ricota, self.toffi):
+            _ingresar_stock(self.negocio, p, 3)
+        self.combo = _combo(self.negocio, "Combo 1", "6900")
+        for p in (self.vainilla, self.ricota, self.toffi):
+            ComboItem.objects.all_tenants().create(negocio=self.negocio, combo=self.combo, producto=p, cantidad=1)
+        self.venta = _venta(self.negocio)
+
+    def test_precio_cobrado_es_precio_fijo_del_combo(self):
+        item = ItemVenta.objects.all_tenants().create(
+            negocio=self.negocio, venta=self.venta, combo=self.combo,
+            cantidad=Decimal("1"), precio_unitario=Decimal("0"),
+        )
+        self.assertEqual(item.precio_unitario, Decimal("6900"))
+
+    def test_descuenta_una_unidad_cerrada_de_cada_componente(self):
+        ItemVenta.objects.all_tenants().create(
+            negocio=self.negocio, venta=self.venta, combo=self.combo,
+            cantidad=Decimal("1"), precio_unitario=Decimal("0"),
+        )
+        for p in (self.vainilla, self.ricota, self.toffi):
+            p.refresh_from_db()
+            self.assertEqual(p.stock_actual, Decimal("2"))
+            self.assertEqual(
+                UnidadFisica.objects.all_tenants().filter(
+                    producto=p, estado=EstadoUnidadFisica.AGOTADA
+                ).count(),
+                1,
+            )
+
+    def test_vender_dos_combos_descuenta_el_doble(self):
+        ItemVenta.objects.all_tenants().create(
+            negocio=self.negocio, venta=self.venta, combo=self.combo,
+            cantidad=Decimal("2"), precio_unitario=Decimal("0"),
+        )
+        for p in (self.vainilla, self.ricota, self.toffi):
+            p.refresh_from_db()
+            self.assertEqual(p.stock_actual, Decimal("1"))
+
+    def test_borrar_item_revierte_stock_de_todos_los_componentes(self):
+        item = ItemVenta.objects.all_tenants().create(
+            negocio=self.negocio, venta=self.venta, combo=self.combo,
+            cantidad=Decimal("1"), precio_unitario=Decimal("0"),
+        )
+        item.delete()
+        for p in (self.vainilla, self.ricota, self.toffi):
+            p.refresh_from_db()
+            self.assertEqual(p.stock_actual, Decimal("3"))
+
+    def test_sin_unidades_cerradas_no_permite_vender_el_combo(self):
+        from stock.servicios import StockInsuficienteError
+        # Se agota el stock cerrado de un solo componente
+        UnidadFisica.objects.all_tenants().filter(producto=self.vainilla).delete()
+        with self.assertRaises(StockInsuficienteError):
+            ItemVenta.objects.all_tenants().create(
+                negocio=self.negocio, venta=self.venta, combo=self.combo,
+                cantidad=Decimal("1"), precio_unitario=Decimal("0"),
+            )
+
+
+class ComboMitadYMitadTest(TestCase):
+    """Combo de mitades de dos sabores distintos (ej: Combo 8: mitad toffi + mitad ricota)."""
+
+    def setUp(self):
+        self.negocio = _negocio("Combo Mitades")
+        self.toffi = _torta(self.negocio, "Toffi", porciones_por_unidad=4)
+        self.ricota = _torta(self.negocio, "Ricota", porciones_por_unidad=4)
+        _ingresar_stock(self.negocio, self.toffi, 2)
+        _ingresar_stock(self.negocio, self.ricota, 2)
+        self.combo = _combo(self.negocio, "Combo 8", "10300")
+        ComboItem.objects.all_tenants().create(
+            negocio=self.negocio, combo=self.combo, producto=self.toffi, porciones=2,
+        )
+        ComboItem.objects.all_tenants().create(
+            negocio=self.negocio, combo=self.combo, producto=self.ricota, porciones=2,
+        )
+        self.venta = _venta(self.negocio)
+
+    def test_descuenta_media_unidad_de_cada_sabor(self):
+        ItemVenta.objects.all_tenants().create(
+            negocio=self.negocio, venta=self.venta, combo=self.combo,
+            cantidad=Decimal("1"), precio_unitario=Decimal("0"),
+        )
+        for p in (self.toffi, self.ricota):
+            p.refresh_from_db()
+            self.assertEqual(p.stock_actual, Decimal("1.5"))
+            abierta = UnidadFisica.objects.all_tenants().get(producto=p, estado=EstadoUnidadFisica.ABIERTA)
+            self.assertEqual(abierta.porciones_restantes, 2)
+
+    def test_precio_es_el_del_combo_no_la_suma_de_precios(self):
+        item = ItemVenta.objects.all_tenants().create(
+            negocio=self.negocio, venta=self.venta, combo=self.combo,
+            cantidad=Decimal("1"), precio_unitario=Decimal("0"),
+        )
+        self.assertEqual(item.precio_unitario, Decimal("10300"))
+
+    def test_borrar_item_revierte_ambas_mitades(self):
+        item = ItemVenta.objects.all_tenants().create(
+            negocio=self.negocio, venta=self.venta, combo=self.combo,
+            cantidad=Decimal("1"), precio_unitario=Decimal("0"),
+        )
+        item.delete()
+        for p in (self.toffi, self.ricota):
+            p.refresh_from_db()
+            self.assertEqual(p.stock_actual, Decimal("2"))
+
+
+class VentaPorcionesSinComboTest(TestCase):
+    """Fraccionamiento ad hoc (sin combo) de una torta según pida el cliente."""
+
+    def setUp(self):
+        self.negocio = _negocio("Porciones Sueltas")
+        self.torta = _torta(self.negocio, "Marmolado", porciones_por_unidad=4)
+        _ingresar_stock(self.negocio, self.torta, 2)
+        self.venta = _venta(self.negocio)
+
+    def test_precio_proporcional_a_la_fraccion(self):
+        item = ItemVenta.objects.all_tenants().create(
+            negocio=self.negocio, venta=self.venta, producto=self.torta,
+            cantidad=Decimal("1"), porciones=2, precio_unitario=Decimal("0"),
+        )
+        self.assertEqual(item.precio_unitario, Decimal("1000"))  # media torta de $2000
+
+    def test_descuenta_solo_la_fraccion_pedida(self):
+        ItemVenta.objects.all_tenants().create(
+            negocio=self.negocio, venta=self.venta, producto=self.torta,
+            cantidad=Decimal("1"), porciones=2, precio_unitario=Decimal("0"),
+        )
+        self.torta.refresh_from_db()
+        self.assertEqual(self.torta.stock_actual, Decimal("1.5"))
+
+    def test_torta_entera_falla_si_todas_estan_abiertas(self):
+        """Reproduce el bug reportado: se vendieron porciones de todas las
+        tortas del mostrador (ninguna quedó cerrada), y el sistema debe
+        rechazar la venta de una entera aunque sumen porciones suficientes."""
+        from stock.servicios import StockInsuficienteError
+        # Simula que las 2 tortas cerradas ya se abrieron y quedan porciones sueltas.
+        for u in UnidadFisica.objects.all_tenants().filter(producto=self.torta):
+            u.estado = EstadoUnidadFisica.ABIERTA
+            u.porciones_restantes = 3
+            u.save(update_fields=["estado", "porciones_restantes"])
+        with self.assertRaises(StockInsuficienteError):
+            ItemVenta.objects.all_tenants().create(
+                negocio=self.negocio, venta=self.venta, producto=self.torta,
+                cantidad=Decimal("1"), precio_unitario=Decimal("0"),
+            )
+
+    def test_borrar_item_repone_la_fraccion(self):
+        item = ItemVenta.objects.all_tenants().create(
+            negocio=self.negocio, venta=self.venta, producto=self.torta,
+            cantidad=Decimal("1"), porciones=2, precio_unitario=Decimal("0"),
+        )
+        item.delete()
+        self.torta.refresh_from_db()
+        self.assertEqual(self.torta.stock_actual, Decimal("2"))
+
+
+class ItemVentaProductoXorComboTest(TestCase):
+    def setUp(self):
+        self.negocio = _negocio("Xor Test")
+        self.producto = _producto(self.negocio)
+        self.combo = _combo(self.negocio)
+        self.venta = _venta(self.negocio)
+
+    def test_sin_producto_ni_combo_falla_clean(self):
+        item = ItemVenta(
+            negocio=self.negocio, venta=self.venta,
+            cantidad=Decimal("1"), precio_unitario=Decimal("100"),
+        )
+        with self.assertRaises(ValidationError):
+            item.clean()
+
+    def test_con_producto_y_combo_a_la_vez_falla_clean(self):
+        item = ItemVenta(
+            negocio=self.negocio, venta=self.venta, producto=self.producto, combo=self.combo,
+            cantidad=Decimal("1"), precio_unitario=Decimal("100"),
+        )
+        with self.assertRaises(ValidationError):
+            item.clean()
+
+    def test_porciones_con_combo_a_la_vez_falla_clean(self):
+        item = ItemVenta(
+            negocio=self.negocio, venta=self.venta, combo=self.combo,
+            cantidad=Decimal("1"), porciones=2, precio_unitario=Decimal("100"),
+        )
+        with self.assertRaises(ValidationError):
+            item.clean()
+
+    def test_porciones_en_producto_no_fraccionable_falla_clean(self):
+        item = ItemVenta(
+            negocio=self.negocio, venta=self.venta, producto=self.producto,
+            cantidad=Decimal("1"), porciones=1, precio_unitario=Decimal("100"),
+        )
+        with self.assertRaises(ValidationError):
+            item.clean()

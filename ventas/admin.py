@@ -5,14 +5,14 @@ from caja.models import MovimientoCaja
 from core.admin import TenantOwnedAdmin
 from stock.models import MovimientoStock
 
-from .models import ItemVenta, PresentacionVenta, Venta
+from .models import Combo, ComboItem, ItemVenta, PresentacionVenta, Venta
 
 
 class ItemVentaInline(TabularInline):
     model = ItemVenta
     extra = 1
-    fields = ("producto", "presentacion", "cantidad", "precio_unitario")
-    autocomplete_fields = ("producto", "presentacion")
+    fields = ("producto", "combo", "presentacion", "cantidad", "porciones", "precio_unitario")
+    autocomplete_fields = ("producto", "combo", "presentacion")
     tab = True
 
 
@@ -81,3 +81,24 @@ class PresentacionVentaAdmin(TenantOwnedAdmin):
     list_display = ("producto", "nombre", "factor", "precio", "activo")
     list_filter = ("activo",)
     search_fields = ("nombre", "producto__nombre")
+
+
+class ComboItemInline(TabularInline):
+    model = ComboItem
+    extra = 1
+    fields = ("producto", "cantidad", "porciones")
+    autocomplete_fields = ("producto",)
+    tab = True
+
+
+@admin.register(Combo)
+class ComboAdmin(TenantOwnedAdmin):
+    list_display = ("nombre", "precio", "activo", "items_resumen")
+    list_filter = ("activo",)
+    search_fields = ("nombre",)
+    inlines = [ComboItemInline]
+
+    def items_resumen(self, obj):
+        return ", ".join(str(i) for i in obj.items.select_related("producto").all())
+
+    items_resumen.short_description = "Incluye"

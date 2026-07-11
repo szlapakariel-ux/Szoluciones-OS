@@ -68,6 +68,15 @@ class Producto(TenantOwnedModel):
         "Costo", max_digits=12, decimal_places=2, default=Decimal("0")
     )
     activo = models.BooleanField("Activo", default=True)
+    porciones_por_unidad = models.PositiveSmallIntegerField(
+        "Porciones por unidad",
+        default=1,
+        help_text=(
+            "Cantidad de porciones en que se puede fraccionar una unidad entera "
+            '(ej: 4 para una torta, 16 para un budín). Dejar en 1 si el producto '
+            "no se vende fraccionado."
+        ),
+    )
 
     class Meta:
         verbose_name = "Producto"
@@ -147,3 +156,36 @@ class MovimientoStock(TenantOwnedModel):
         Producto.objects.all_tenants().filter(pk=self.producto_id).update(
             stock_actual=models.F("stock_actual") + delta
         )
+
+
+class EstadoUnidadFisica(models.TextChoices):
+    CERRADA = "CERRADA", "Cerrada"
+    ABIERTA = "ABIERTA", "Abierta"
+    AGOTADA = "AGOTADA", "Agotada"
+
+
+class UnidadFisica(TenantOwnedModel):
+    """Rastrea cada unidad entera físicamente producida de un producto fraccionable
+    (ej: cada torta horneada), para distinguir "cerrada" (disponible para vender
+    entera) de "abierta" (ya se le vendieron porciones, quedan sueltas en el
+    mostrador). Solo aplica a productos con `porciones_por_unidad` > 1."""
+
+    producto = models.ForeignKey(
+        Producto,
+        on_delete=models.CASCADE,
+        related_name="unidades_fisicas",
+        verbose_name="Producto",
+    )
+    estado = models.CharField(
+        "Estado", max_length=10, choices=EstadoUnidadFisica.choices,
+        default=EstadoUnidadFisica.CERRADA,
+    )
+    porciones_restantes = models.PositiveSmallIntegerField("Porciones restantes", default=0)
+
+    class Meta:
+        verbose_name = "Unidad física"
+        verbose_name_plural = "Unidades físicas"
+        ordering = ["-creado_en"]
+
+    def __str__(self):
+        return f"{self.producto} · {self.get_estado_display()} ({self.porciones_restantes} porc.)"
