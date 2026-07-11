@@ -49,8 +49,16 @@ class TenantOwnedAdmin(ModelAdmin):
         return super().has_change_permission(request, obj)
 
     def has_delete_permission(self, request, obj=None):
+        # PROVISORIO (etapa de prueba en producción): el dueño del negocio
+        # puede borrar cualquier registro propio para corregir cargas de
+        # stock/ventas reales, sin depender de qué permisos Django tenga
+        # asignados. Reevaluar/retirar este bypass cuando termine la prueba.
         if getattr(request, "negocio_frozen", False):
             return False
+        if request.user.is_authenticated and (request.user.is_superuser or request.user.negocio_id):
+            if obj is not None and hasattr(obj, "negocio_id") and request.user.negocio_id:
+                return obj.negocio_id == request.user.negocio_id
+            return True
         return super().has_delete_permission(request, obj)
 
 

@@ -1620,3 +1620,55 @@ class ItemVentaProductoXorComboTest(TestCase):
         )
         with self.assertRaises(ValidationError):
             item.clean()
+
+
+class PresentacionVentaFraccionariaEnProductoFraccionableTest(TestCase):
+    """La forma "vieja" de vender media/porción (PresentacionVenta con factor
+    0.5/0.25) debe consumir UnidadFisica granularmente, no solo el decimal de
+    stock_actual — para que "vender entera" siga rechazándose correctamente
+    cuando todo lo que queda son unidades abiertas."""
+
+    def setUp(self):
+        self.negocio = _negocio("PV Fraccionaria")
+        self.torta = _torta(self.negocio, "Torta Ricota", porciones_por_unidad=4)
+        _ingresar_stock(self.negocio, self.torta, 2)
+        self.media = _presentacion(self.negocio, self.torta, "Media", factor="0.5", precio="5000")
+        self.porcion = _presentacion(self.negocio, self.torta, "Porción", factor="0.25", precio="2600")
+        self.venta = _venta(self.negocio)
+
+    def test_vender_media_abre_una_unidad_y_descuenta_2_porciones(self):
+        _item_venta(self.negocio, self.venta, self.torta, "1", presentacion=self.media)
+        self.torta.refresh_from_db()
+        self.assertEqual(self.torta.stock_actual, Decimal("1.5"))
+        abierta = UnidadFisica.objects.all_tenants().get(producto=self.torta, estado=EstadoUnidadFisica.ABIERTA)
+        self.assertEqual(abierta.porciones_restantes, 2)
+
+    def test_precio_de_media_es_el_configurado_no_proporcional(self):
+        item = _item_venta(self.negocio, self.venta, self.torta, "1", presentacion=self.media)
+        self.assertEqual(item.precio_unitario, Decimal("5000.00"))
+
+    def test_vender_todas_las_medias_impide_vender_entera(self):
+        from stock.servicios import StockInsuficienteError
+        # 3 medias (6 porciones) sobre 2 tortas (8 porciones) dejan a ambas
+        # abiertas/agotadas: la primera se agota completando su segunda mitad,
+        # la segunda abre la otra torta y le vende su primera mitad.
+        _item_venta(self.negocio, self.venta, self.torta, "1", presentacion=self.media)
+        _item_venta(self.negocio, self.venta, self.torta, "1", presentacion=self.media)
+        _item_venta(self.negocio, self.venta, self.torta, "1", presentacion=self.media)
+        self.assertEqual(
+            UnidadFisica.objects.all_tenants().filter(
+                producto=self.torta, estado=EstadoUnidadFisica.CERRADA
+            ).count(),
+            0,
+        )
+        with self.assertRaises(StockInsuficienteError):
+            ItemVenta.objects.all_tenants().create(
+                negocio=self.negocio, venta=self.venta, producto=self.torta,
+                cantidad=Decimal("1"), precio_unitario=Decimal("0"),
+            )
+
+    def test_borrar_item_con_presentacion_fraccionaria_repone_porciones(self):
+        item = _item_venta(self.negocio, self.venta, self.torta, "1", presentacion=self.porcion)
+        item.delete()
+        self.torta.refresh_from_db()
+        self.assertEqual(self.torta.stock_actual, Decimal("2"))

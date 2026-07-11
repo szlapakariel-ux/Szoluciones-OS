@@ -16,9 +16,24 @@ def _cantidad_stock(instance: ItemVenta):
     return instance.cantidad
 
 
+def _partir_en_enteras_y_porciones(producto, cantidad_stock):
+    """Traduce una cantidad de stock (posiblemente fraccionaria, ej: factor 0.5
+    de una PresentacionVenta "Media") a (unidades enteras, porciones sueltas),
+    para poder consumir/revertir contra UnidadFisica de forma granular."""
+    porciones_por_unidad = producto.porciones_por_unidad
+    enteras = int(cantidad_stock)
+    resto = cantidad_stock - enteras
+    porciones = int((resto * porciones_por_unidad).to_integral_value())
+    return enteras, porciones
+
+
 def _egresar(negocio, producto, venta, cantidad_stock, motivo):
     if producto.porciones_por_unidad > 1:
-        consumir_enteras(producto, cantidad_stock)
+        enteras, porciones = _partir_en_enteras_y_porciones(producto, cantidad_stock)
+        if enteras:
+            consumir_enteras(producto, enteras)
+        if porciones:
+            consumir_porciones(producto, porciones)
     MovimientoStock.objects.create(
         negocio=negocio,
         producto=producto,
@@ -44,8 +59,11 @@ def _egresar_porciones(negocio, producto, venta, porciones, motivo):
 
 def _ingresar(negocio, producto, venta, cantidad_stock, motivo):
     if producto.porciones_por_unidad > 1:
-        for _ in range(int(cantidad_stock)):
+        enteras, porciones = _partir_en_enteras_y_porciones(producto, cantidad_stock)
+        for _ in range(enteras):
             revertir_entera(producto)
+        if porciones:
+            revertir_porciones(producto, porciones)
     MovimientoStock.objects.create(
         negocio=negocio,
         producto=producto,
