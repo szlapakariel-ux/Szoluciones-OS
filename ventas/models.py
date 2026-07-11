@@ -167,7 +167,7 @@ class ItemVenta(TenantOwnedModel):
                     / self.producto.porciones_por_unidad
                 )
             else:
-                self.precio_unitario = self.producto.precio_venta
+                self.precio_unitario = self.producto.precio_para_cantidad(self.cantidad)
         super().save(*args, **kwargs)
 
 

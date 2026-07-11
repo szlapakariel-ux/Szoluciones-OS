@@ -170,7 +170,7 @@ def venta_agregar(request):
                 + f"?producto_id={producto.pk}&cantidad={cantidad}"
             )
 
-    precio = str(presentacion.precio) if presentacion else str(producto.precio_venta)
+    precio = str(presentacion.precio) if presentacion else str(producto.precio_para_cantidad(cantidad))
     presentacion_nombre = presentacion.nombre if presentacion else None
 
     cart = request.session.get("cart", [])
@@ -179,7 +179,10 @@ def venta_agregar(request):
             item["producto_id"] == producto.pk
             and item.get("presentacion_id") == presentacion_id
         ):
-            item["cantidad"] = str(Decimal(str(item["cantidad"])) + cantidad)
+            nueva_cantidad = Decimal(str(item["cantidad"])) + cantidad
+            item["cantidad"] = str(nueva_cantidad)
+            if not presentacion:
+                item["precio"] = str(producto.precio_para_cantidad(nueva_cantidad))
             break
     else:
         cart.append({

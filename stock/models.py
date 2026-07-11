@@ -64,6 +64,24 @@ class Producto(TenantOwnedModel):
     precio_venta = models.DecimalField(
         "Precio de venta", max_digits=12, decimal_places=2, default=Decimal("0")
     )
+    cantidad_minima_mayorista = models.PositiveSmallIntegerField(
+        "Cantidad mínima por mayor",
+        null=True,
+        blank=True,
+        help_text=(
+            "A partir de esta cantidad en una misma línea de venta se cobra "
+            '"Precio por mayor" en vez de "Precio de venta" (ej: 6 facturas o más a '
+            "$700 c/u en vez de $800). Vacío = no aplica precio por mayor."
+        ),
+    )
+    precio_mayorista = models.DecimalField(
+        "Precio por mayor",
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Precio unitario que se cobra cuando se alcanza la "Cantidad mínima por mayor".',
+    )
     costo = models.DecimalField(
         "Costo", max_digits=12, decimal_places=2, default=Decimal("0")
     )
@@ -96,6 +114,17 @@ class Producto(TenantOwnedModel):
     @property
     def unidad_corta(self):
         return _UNIDAD_CORTA.get(self.unidad_medida, self.get_unidad_medida_display().lower())
+
+    def precio_para_cantidad(self, cantidad):
+        """Precio unitario de lista para vender `cantidad` de este producto,
+        aplicando el precio por mayor si se alcanza la cantidad mínima."""
+        if (
+            self.cantidad_minima_mayorista
+            and self.precio_mayorista is not None
+            and cantidad >= self.cantidad_minima_mayorista
+        ):
+            return self.precio_mayorista
+        return self.precio_venta
 
 
 class MovimientoStock(TenantOwnedModel):

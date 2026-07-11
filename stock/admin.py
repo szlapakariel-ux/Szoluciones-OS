@@ -40,7 +40,7 @@ class ProductoAdmin(TenantOwnedAdmin):
     fieldsets = (
         ("Identificación", {"fields": ("nombre", "tipo", "codigo", "presentacion", "unidad_medida", "activo")}),
         ("Stock", {"fields": ("stock_actual", "stock_minimo", "porciones_por_unidad")}),
-        ("Precios", {"fields": ("costo", "precio_venta")}),
+        ("Precios", {"fields": ("costo", "precio_venta", "cantidad_minima_mayorista", "precio_mayorista")}),
     )
     readonly_fields = ("stock_actual",)
     inlines = [PresentacionVentaInline]

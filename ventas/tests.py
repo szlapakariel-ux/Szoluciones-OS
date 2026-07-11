@@ -1799,3 +1799,112 @@ class POSComboConfirmarTest(POSComboMixin, TestCase):
     def test_carrito_vaciado_tras_confirmar_combo(self):
         self._confirmar_combo()
         self.assertEqual(self._get_cart(), [])
+
+
+# ===========================================================================
+# ETAPA 7 — Precio por mayor (facturas: 1-5 a $800, 6+ a $700 c/u)
+# ===========================================================================
+
+def _factura_mayorista(negocio):
+    p = _producto(negocio, "1 Factura")
+    p.precio_venta = Decimal("800")
+    p.cantidad_minima_mayorista = 6
+    p.precio_mayorista = Decimal("700")
+    p.save(update_fields=["precio_venta", "cantidad_minima_mayorista", "precio_mayorista"])
+    return p
+
+
+class PrecioParaCantidadTest(TestCase):
+    def setUp(self):
+        self.negocio = _negocio("Mayorista Model")
+        self.factura = _factura_mayorista(self.negocio)
+
+    def test_por_debajo_del_minimo_usa_precio_de_venta(self):
+        self.assertEqual(self.factura.precio_para_cantidad(Decimal("5")), Decimal("800"))
+
+    def test_en_el_minimo_usa_precio_mayorista(self):
+        self.assertEqual(self.factura.precio_para_cantidad(Decimal("6")), Decimal("700"))
+
+    def test_por_encima_del_minimo_usa_precio_mayorista(self):
+        self.assertEqual(self.factura.precio_para_cantidad(Decimal("10")), Decimal("700"))
+
+    def test_sin_configurar_usa_siempre_precio_de_venta(self):
+        simple = _producto(self.negocio, "Medialuna")
+        simple.precio_venta = Decimal("100")
+        simple.save(update_fields=["precio_venta"])
+        self.assertEqual(simple.precio_para_cantidad(Decimal("100")), Decimal("100"))
+
+
+class ItemVentaPrecioMayoristaTest(TestCase):
+    def setUp(self):
+        self.negocio = _negocio("Mayorista ItemVenta")
+        self.factura = _factura_mayorista(self.negocio)
+        self.venta = _venta(self.negocio)
+
+    def test_item_venta_5_unidades_usa_precio_normal(self):
+        item = _item_venta(self.negocio, self.venta, self.factura, "5")
+        self.assertEqual(item.precio_unitario, Decimal("800"))
+
+    def test_item_venta_6_unidades_usa_precio_mayorista(self):
+        item = _item_venta(self.negocio, self.venta, self.factura, "6")
+        self.assertEqual(item.precio_unitario, Decimal("700"))
+
+
+class POSPrecioMayoristaTest(TestCase):
+    """El POS recalcula el precio de la línea cuando la cantidad acumulada
+    cruza el umbral de precio por mayor (ej: agregar de a poco hasta pasar
+    de 5 a 6 facturas)."""
+
+    def setUp(self):
+        self.negocio = _negocio("Mayorista POS")
+        self.user = _superusuario(self.negocio, username="mayorista_pos")
+        self.factura = _factura_mayorista(self.negocio)
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _get_cart(self):
+        return self.client.session.get("cart", [])
+
+    def test_agregar_5_usa_precio_normal(self):
+        self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": self.factura.pk, "cantidad": "5"},
+        )
+        cart = self._get_cart()
+        self.assertEqual(Decimal(cart[0]["precio"]), Decimal("800"))
+
+    def test_agregar_6_de_una_usa_precio_mayorista(self):
+        self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": self.factura.pk, "cantidad": "6"},
+        )
+        cart = self._get_cart()
+        self.assertEqual(Decimal(cart[0]["precio"]), Decimal("700"))
+
+    def test_cruzar_el_umbral_en_dos_agregados_recalcula_precio(self):
+        self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": self.factura.pk, "cantidad": "3"},
+        )
+        cart = self._get_cart()
+        self.assertEqual(Decimal(cart[0]["precio"]), Decimal("800"))
+
+        self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": self.factura.pk, "cantidad": "3"},
+        )
+        cart = self._get_cart()
+        self.assertEqual(len(cart), 1)
+        self.assertEqual(Decimal(cart[0]["cantidad"]), Decimal("6"))
+        self.assertEqual(Decimal(cart[0]["precio"]), Decimal("700"))
+
+    def test_confirmar_venta_con_precio_mayorista(self):
+        self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": self.factura.pk, "cantidad": "8"},
+        )
+        self.client.post(reverse("app_venta_confirmar"), {"metodo_pago": "EFECTIVO"})
+        item = ItemVenta.objects.all_tenants().filter(negocio=self.negocio, producto=self.factura).first()
+        self.assertIsNotNone(item)
+        self.assertEqual(item.precio_unitario, Decimal("700"))
+        self.assertEqual(item.subtotal, Decimal("5600"))
