@@ -780,6 +780,24 @@ class POSAgregarSinPresentacionTest(POSHelperMixin, TestCase):
         self.assertRedirects(resp, reverse("app_venta"))
         self.assertEqual(self._get_cart(), [])
 
+    def test_cantidad_decimal_en_producto_por_unidad_es_rechazada(self):
+        """Un producto que se vende por unidad entera (ej: facturas) no admite
+        cantidades como 1.02 — evita el bug real visto en producción."""
+        resp = self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": self.producto_sin_pv.pk, "cantidad": "1.02"},
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+        self.assertEqual(self._get_cart(), [])
+
+    def test_cantidad_entera_en_producto_por_unidad_se_acepta(self):
+        resp = self.client.post(
+            reverse("app_venta_agregar"),
+            {"producto_id": self.producto_sin_pv.pk, "cantidad": "3"},
+        )
+        self.assertRedirects(resp, reverse("app_venta"))
+        self.assertEqual(len(self._get_cart()), 1)
+
     def test_producto_inexistente_muestra_error(self):
         resp = self.client.post(
             reverse("app_venta_agregar"),
