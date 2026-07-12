@@ -1,32 +1,58 @@
 {% extends "admin/base_site.html" %}
+{% load i18n unfold %}
+
+{% block bodyclass %}{{ block.super }} app-{{ opts.app_label }} model-{{ opts.model_name }}{% endblock %}
 
 {% block content %}
-<h1>{{ title }}</h1>
+<div class="border border-base-200 rounded-default shadow-xs dark:border-base-800">
+    <p class="font-semibold p-4 text-font-important-light dark:text-font-important-dark">
+        Se van a modificar {{ productos|length }} producto(s) seleccionado(s):
+    </p>
 
-<p>Se van a modificar <strong>{{ productos|length }}</strong> producto(s) seleccionado(s):</p>
-<ul>
-  {% for p in productos %}
-  <li>{{ p.nombre }}</li>
-  {% endfor %}
-</ul>
+    <div class="border-t border-base-200 p-4 dark:border-base-800">
+        <ul class="leading-relaxed list-disc list-inside text-font-default-light dark:text-font-default-dark">
+            {% for p in productos %}
+            <li>{{ p.nombre }}</li>
+            {% endfor %}
+        </ul>
+    </div>
 
-<p>Completá solo los campos que querés cambiar — los que dejes en blanco no se tocan.</p>
+    <div class="border-t border-base-200 p-4 dark:border-base-800">
+        <p class="text-sm text-font-subtle-light dark:text-font-subtle-dark mb-4">
+            Completá solo los campos que querés cambiar — los que dejes en blanco no se tocan.
+        </p>
 
-<form method="post">
-  {% csrf_token %}
-  {% for p in productos %}
-  <input type="hidden" name="{{ action_checkbox_name }}" value="{{ p.pk }}">
-  {% endfor %}
-  <input type="hidden" name="action" value="editar_seleccionados">
+        <form method="post">
+            {% csrf_token %}
+            {% for p in productos %}
+            <input type="hidden" name="{{ action_checkbox_name }}" value="{{ p.pk }}">
+            {% endfor %}
+            <input type="hidden" name="action" value="editar_seleccionados">
 
-  <table>
-    {{ form.as_table }}
-  </table>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {% for field in form %}
+                <div class="flex flex-col group mb-2">
+                    <label for="{{ field.id_for_label }}" class="block font-semibold mb-2 text-font-important-light dark:text-font-important-dark text-sm">
+                        {{ field.label }}
+                    </label>
+                    {{ field }}
+                    {% if field.errors %}
+                    <div class="text-red-600 text-sm mt-1">{{ field.errors }}</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
 
-  <p>
-    <input type="submit" name="aplicar" value="Aplicar cambios" class="default" style="cursor:pointer;">
-    &nbsp;
-    <a href="." class="button cancel-link">Cancelar</a>
-  </p>
-</form>
+            <div class="flex flex-col gap-3 items-center w-full lg:flex-row mt-4">
+                {% component "unfold/components/button.html" with href="." variant="default" class="w-full lg:mb-0 lg:w-auto" %}
+                    Cancelar
+                {% endcomponent %}
+
+                {% component "unfold/components/button.html" with submit=1 name="aplicar" value="Aplicar cambios" variant="primary" class="w-full lg:ml-auto lg:w-auto" %}
+                    Aplicar cambios
+                {% endcomponent %}
+            </div>
+        </form>
+    </div>
+</div>
 {% endblock %}
