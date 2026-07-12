@@ -1,0 +1,32 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<h1>{{ title }}</h1>
+
+<p>Se van a modificar <strong>{{ productos|length }}</strong> producto(s) seleccionado(s):</p>
+<ul>
+  {% for p in productos %}
+  <li>{{ p.nombre }}</li>
+  {% endfor %}
+</ul>
+
+<p>Completá solo los campos que querés cambiar — los que dejes en blanco no se tocan.</p>
+
+<form method="post">
+  {% csrf_token %}
+  {% for p in productos %}
+  <input type="hidden" name="{{ action_checkbox_name }}" value="{{ p.pk }}">
+  {% endfor %}
+  <input type="hidden" name="action" value="editar_seleccionados">
+
+  <table>
+    {{ form.as_table }}
+  </table>
+
+  <p>
+    <input type="submit" name="aplicar" value="Aplicar cambios" class="default" style="cursor:pointer;">
+    &nbsp;
+    <a href="." class="button cancel-link">Cancelar</a>
+  </p>
+</form>
+{% endblock %}

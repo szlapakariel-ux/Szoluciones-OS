@@ -1,7 +1,9 @@
 from decimal import Decimal, InvalidOperation
 
 from django.contrib import admin, messages
+from django.contrib.admin.helpers import ACTION_CHECKBOX_NAME
 from django.http import HttpResponseRedirect
+from django.shortcuts import render
 from django.urls import path, reverse
 
 from unfold.admin import TabularInline
@@ -9,6 +11,7 @@ from unfold.admin import TabularInline
 from core.admin import TenantOwnedAdmin
 from ventas.models import PresentacionVenta
 
+from .forms import EditarProductosMasivoForm
 from .models import MovimientoStock, Producto, UnidadFisica
 
 
@@ -44,6 +47,34 @@ class ProductoAdmin(TenantOwnedAdmin):
     )
     readonly_fields = ("stock_actual",)
     inlines = [PresentacionVentaInline]
+    actions = ["editar_seleccionados"]
+
+    @admin.action(description="Editar seleccionados/as")
+    def editar_seleccionados(self, request, queryset):
+        if "aplicar" in request.POST:
+            form = EditarProductosMasivoForm(request.POST)
+            if form.is_valid():
+                cambios = form.campos_a_actualizar()
+                if cambios:
+                    cantidad = queryset.update(**cambios)
+                    self.message_user(
+                        request,
+                        f"Se actualizaron {cantidad} producto(s): "
+                        + ", ".join(f"{k}={v}" for k, v in cambios.items()),
+                    )
+                else:
+                    self.message_user(request, "No se completó ningún campo — no se cambió nada.", messages.WARNING)
+                return HttpResponseRedirect(request.get_full_path())
+        else:
+            form = EditarProductosMasivoForm()
+
+        return render(request, "admin/stock/producto/editar_seleccionados.html", {
+            "productos": queryset,
+            "form": form,
+            "action_checkbox_name": ACTION_CHECKBOX_NAME,
+            "opts": self.model._meta,
+            "title": "Editar productos seleccionados",
+        })
 
     def get_urls(self):
         urls = super().get_urls()
