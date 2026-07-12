@@ -1,9 +1,13 @@
 from decimal import Decimal
 
-from django.test import TestCase
+from django.contrib.auth import get_user_model
+from django.test import Client, TestCase
+from django.urls import reverse
 
 from core.models import Negocio
 from .models import EstadoUnidadFisica, MovimientoStock, Producto, TipoProducto, UnidadFisica
+
+User = get_user_model()
 from .servicios import (
     StockInsuficienteError,
     consumir_entera,
@@ -209,3 +213,92 @@ class RevertirTest(TestCase):
             if u.estado != EstadoUnidadFisica.CERRADA
         )
         self.assertEqual(total, 4)
+
+
+def _superusuario(negocio, username="admin_stock"):
+    user = User.objects.create_superuser(
+        username=username, password="testpass123", email=f"{username}@test.com",
+    )
+    user.negocio = negocio
+    user.save(update_fields=["negocio"])
+    return user
+
+
+class EditarProductosMasivoAdminTest(TestCase):
+    def setUp(self):
+        self.negocio = _negocio("Editar Masivo")
+        self.user = _superusuario(self.negocio)
+        self.client = Client()
+        self.client.force_login(self.user)
+        self.p1 = Producto.objects.all_tenants().create(
+            negocio=self.negocio, nombre="Producto 1", tipo=TipoProducto.VENTA,
+            precio_venta=Decimal("100"), activo=True,
+        )
+        self.p2 = Producto.objects.all_tenants().create(
+            negocio=self.negocio, nombre="Producto 2", tipo=TipoProducto.VENTA,
+            precio_venta=Decimal("200"), activo=True,
+        )
+        self.otro_negocio = _negocio("Otro Negocio Masivo")
+        self.ajeno = Producto.objects.all_tenants().create(
+            negocio=self.otro_negocio, nombre="Producto Ajeno", tipo=TipoProducto.VENTA,
+            precio_venta=Decimal("50"), activo=True,
+        )
+
+    def _url(self):
+        return reverse("admin:stock_producto_changelist")
+
+    def test_intermedio_muestra_formulario_sin_aplicar(self):
+        resp = self.client.post(self._url(), {
+            "action": "editar_seleccionados",
+            "_selected_action": [self.p1.pk, self.p2.pk],
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Producto 1")
+        self.assertContains(resp, "Producto 2")
+
+    def test_aplicar_actualiza_solo_seleccionados(self):
+        self.client.post(self._url(), {
+            "action": "editar_seleccionados",
+            "_selected_action": [self.p1.pk, self.p2.pk],
+            "aplicar": "Aplicar cambios",
+            "activo": "false",
+            "precio_venta": "",
+            "costo": "",
+            "stock_minimo": "",
+            "porciones_por_unidad": "",
+            "cantidad_minima_mayorista": "",
+            "precio_mayorista": "",
+            "tipo": "",
+            "unidad_medida": "",
+        })
+        self.p1.refresh_from_db()
+        self.p2.refresh_from_db()
+        self.assertFalse(self.p1.activo)
+        self.assertFalse(self.p2.activo)
+
+    def test_aplicar_no_afecta_productos_de_otro_negocio(self):
+        self.client.post(self._url(), {
+            "action": "editar_seleccionados",
+            "_selected_action": [self.p1.pk, self.p2.pk],
+            "aplicar": "Aplicar cambios",
+            "activo": "false",
+            "precio_venta": "", "costo": "", "stock_minimo": "",
+            "porciones_por_unidad": "", "cantidad_minima_mayorista": "",
+            "precio_mayorista": "", "tipo": "", "unidad_medida": "",
+        })
+        self.ajeno.refresh_from_db()
+        self.assertTrue(self.ajeno.activo)
+
+    def test_solo_actualiza_campos_completados(self):
+        self.client.post(self._url(), {
+            "action": "editar_seleccionados",
+            "_selected_action": [self.p1.pk],
+            "aplicar": "Aplicar cambios",
+            "precio_venta": "999",
+            "activo": "", "costo": "", "stock_minimo": "",
+            "porciones_por_unidad": "", "cantidad_minima_mayorista": "",
+            "precio_mayorista": "", "tipo": "", "unidad_medida": "",
+        })
+        self.p1.refresh_from_db()
+        self.assertEqual(self.p1.precio_venta, Decimal("999"))
+        self.assertTrue(self.p1.activo)  # no se tocó
