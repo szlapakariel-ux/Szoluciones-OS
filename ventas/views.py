@@ -18,6 +18,15 @@ def _fmt(amount):
     return "$" + s.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _cantidad_valida_para(producto, cantidad):
+    """Los productos que se venden por unidad entera (no se pesan/miden) no
+    admiten cantidades fraccionarias como "1.02 facturas"."""
+    from stock.models import UnidadMedida
+    if producto.unidad_medida == UnidadMedida.UNIDAD:
+        return cantidad == cantidad.to_integral_value()
+    return True
+
+
 @login_required(login_url="/admin/login/")
 def venta_rapida(request):
     negocio = getattr(request.user, "negocio", None)
@@ -144,6 +153,10 @@ def venta_agregar(request):
         producto = Producto.objects.all_tenants().get(pk=producto_id, negocio=negocio)
     except Producto.DoesNotExist:
         messages.error(request, "Producto no encontrado.")
+        return redirect("app_venta")
+
+    if not _cantidad_valida_para(producto, cantidad):
+        messages.error(request, f"'{producto.nombre}' se vende en cantidades enteras.")
         return redirect("app_venta")
 
     presentacion = None
